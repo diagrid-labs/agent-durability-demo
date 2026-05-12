@@ -1,0 +1,16 @@
+Postgres for the Bank Heist demo is deployed.
+
+Service (in-cluster):
+  postgres.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+
+Databases:
+  app  : {{ .Values.auth.appDatabase }}     (customers, accounts, transactions, audit_log)
+  dapr : {{ .Values.auth.daprDatabase }}    (Dapr workflow checkpoints — do not target with chaos)
+
+Connect from your laptop:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/postgres 5432:5432
+  PGPASSWORD={{ .Values.auth.password }} psql -h localhost -U {{ .Values.auth.username }} -d {{ .Values.auth.appDatabase }}
+
+Verify seed:
+  SELECT id, name, tier FROM customers ORDER BY id;
+  SELECT customer_id, balance, target FROM accounts ORDER BY customer_id;

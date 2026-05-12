@@ -1,0 +1,33 @@
+image:
+  repository: bank-heist/mcp
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+service:
+  port: 8000
+
+# Connection to the Postgres chart's Service.
+postgres:
+  host: postgres.bank-heist.svc.cluster.local
+  port: 5432
+  database: bankdemo
+  credentialsSecret: postgres-credentials
+  poolMax: 20
+
+logLevel: INFO
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Pin to control zone — never a chaos target.
+nodeSelector:
+  topology.kubernetes.io/zone: control
+
+tolerations: []

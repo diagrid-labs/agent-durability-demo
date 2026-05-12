@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "postgres.name" . }}-init
+  labels:
+    {{- include "postgres.labels" . | nindent 4 }}
+data:
+  00-databases.sql: |
+    CREATE DATABASE {{ .Values.auth.daprDatabase }};
+
+  10-schema.sql: |
+    \connect {{ .Values.auth.appDatabase }}
+
+    CREATE TABLE customers (
+      id    INT PRIMARY KEY,
+      name  TEXT NOT NULL,
+      tier  TEXT,
+      risk  TEXT
+    );
+
+    CREATE TABLE accounts (
+      customer_id INT PRIMARY KEY REFERENCES customers(id),
+      balance     NUMERIC(10,2) NOT NULL,
+      target      NUMERIC(10,2) NOT NULL,
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE transactions (
+      tx_id       TEXT PRIMARY KEY,
+      customer_id INT NOT NULL REFERENCES customers(id),
+      amount      NUMERIC(10,2) NOT NULL,
+      agent_id    TEXT NOT NULL,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX transactions_customer_idx ON transactions(customer_id, created_at);
+
+    CREATE TABLE audit_log (
+      id         BIGSERIAL PRIMARY KEY,
+      ts         TIMESTAMPTZ NOT NULL DEFAULT now(),
+      event_type TEXT NOT NULL,
+      payload    JSONB NOT NULL
+    );
+    CREATE INDEX audit_log_ts_idx ON audit_log(ts DESC);
+
+    -- LISTEN/NOTIFY trigger so the orchestrator can stream tx events to the UI
+    -- without polling. Channel name matches what the orchestrator subscribes to.
+    CREATE OR REPLACE FUNCTION notify_transaction() RETURNS trigger AS $$
+    BEGIN
+      PERFORM pg_notify(
+        'tx_committed',
+        json_build_object(
+          'tx_id', NEW.tx_id,
+          'customer_id', NEW.customer_id,
+          'amount', NEW.amount,
+          'agent_id', NEW.agent_id,
+          'created_at', NEW.created_at
+        )::text
+      );
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    CREATE TRIGGER transactions_notify
+      AFTER INSERT ON transactions
+      FOR EACH ROW EXECUTE FUNCTION notify_transaction();
+
+  20-seed.sql: |
+    \connect {{ .Values.auth.appDatabase }}
+
+    INSERT INTO customers (id, name, tier, risk) VALUES
+      (1,  'Aiko Volkov',  'silver', 'low'),
+      (2,  'Hiro Walsh',   'bronze', 'low'),
+      (3,  'Omar Roth',    'silver', 'low'),
+      (4,  'Vera Wei',     'bronze', 'low'),
+      (5,  'Cleo Patel',   'silver', 'low'),
+      (6,  'Faro Osei',    'bronze', 'low'),
+      (7,  'Maya Park',    'silver', 'low'),
+      (8,  'Tariq Khan',   'bronze', 'low'),
+      (9,  'Asha Tana',    'silver', 'low'),
+      (10, 'Mira Okafor',  'bronze', 'low');
+
+    INSERT INTO accounts (customer_id, balance, target)
+    SELECT id, {{ .Values.seed.startBalance }}, {{ .Values.seed.targetBalance }}
+    FROM customers;

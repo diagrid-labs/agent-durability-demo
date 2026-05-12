@@ -1,0 +1,25 @@
+Agent worker deployed.
+
+In-cluster service:
+  http://agent.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+
+Endpoints:
+  POST /trigger {customer_id, target?}   start a workflow instance
+  GET  /status/{instance_id}              workflow runtime status
+  GET  /healthz                           liveness
+
+Smoke test (durability):
+  kubectl -n {{ .Release.Namespace }} port-forward svc/agent 8000:8000
+
+  # Start the workflow draining customer 1 to $200
+  curl -s -X POST localhost:8000/trigger -H 'content-type: application/json' \
+       -d '{"customer_id": 1, "target": 200}'
+
+  # Mid-run, kill the worker pod
+  kubectl -n {{ .Release.Namespace }} delete pod -l app.kubernetes.io/name=agent
+
+  # Watch it resume — when COMPLETED, balance should be exactly 200
+  curl -s localhost:8000/status/customer-1
+  kubectl -n {{ .Release.Namespace }} exec postgres-0 -- \
+    psql -U bankadmin -d bankdemo -c \
+    "SELECT balance FROM accounts WHERE customer_id=1; SELECT count(*) FROM transactions WHERE customer_id=1;"

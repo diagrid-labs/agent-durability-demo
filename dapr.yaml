@@ -1,0 +1,17 @@
+version: 1
+common:
+  appLogDestination: console
+  daprdLogDestination: console
+  enableAppHealthCheck: false
+  logLevel: info
+apps:
+  - appID: agent-worker
+    appDirPath: ./services/agent
+    daprHTTPPort: 3500
+    appPort: 8000
+    appProtocol: http
+    command: ["uv", "run", "uvicorn", "agent_worker.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    env:
+      MCP_URL: http://localhost:9000/mcp/
+      STUB_LLM: "true"
+      LOG_LEVEL: INFO

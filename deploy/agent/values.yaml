@@ -1,0 +1,57 @@
+image:
+  repository: bank-heist/agent
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# Step 3: one worker. Step 6 will scale this up.
+replicaCount: 1
+
+service:
+  port: 8000
+
+mcp:
+  # Trailing slash matters — FastMCP redirects /mcp → /mcp/, the client doesn't
+  # follow POST redirects.
+  url: http://mcp.bank-heist.svc.cluster.local:8000/mcp/
+
+# Workflow state store (Dapr Component, written by this chart).
+stateStore:
+  componentName: workflowstatestore
+  postgresHost: postgres.bank-heist.svc.cluster.local
+  postgresPort: 5432
+  postgresDatabase: dapr_state
+  # Inline credentials for the demo. See DECISIONS.md #17.
+  postgresUser: bankadmin
+  postgresPassword: bankadmin
+
+logLevel: INFO
+
+# stub | real. Real mode requires apiKeySecret to be set.
+agent:
+  llm:
+    mode: stub
+    model: gpt-4o-mini
+    # Name of a Secret with key OPENAI_API_KEY. Only required when mode=real.
+    # dapr-agents 1.0.1 has no built-in Anthropic client (see DECISIONS.md #19).
+    apiKeySecret: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+# Agent workers run in chaos zones — these become the chaos targets.
+nodeSelector:
+  bank-heist.role: agents
+
+tolerations: []
+
+dapr:
+  enabled: true
+  appId: agent-worker
+  appPort: 8000
+  appProtocol: http
+  logLevel: info

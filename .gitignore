@@ -1,0 +1,33 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+
+# Claude Code local settings (per-user permissions)
+.claude/settings.local.json
+
+# Ephemeral demo output
+watch_*
+scratch/
+
+# Helm
+deploy/**/charts/
+deploy/**/*.tgz

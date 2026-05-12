@@ -1,0 +1,15 @@
+MCP server deployed.
+
+In-cluster service:
+  http://mcp.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+
+Endpoints:
+  /mcp/*      streamable-HTTP MCP transport (agents)
+  /chaos/*    POST drop, latency, reset; GET state (orchestrator only)
+  /healthz    DB-roundtrip liveness
+
+Smoke test from your laptop:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/mcp 8000:8000
+  curl localhost:8000/healthz
+  curl -X POST localhost:8000/chaos/drop -H 'content-type: application/json' -d '{"count":1}'
+  curl localhost:8000/chaos

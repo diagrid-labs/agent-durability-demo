@@ -1,0 +1,33 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: bankadmin
+      POSTGRES_PASSWORD: bankadmin
+      POSTGRES_DB: bankdemo
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+      - bankdemo-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bankadmin -d bankdemo"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  mcp:
+    build:
+      context: ../services/mcp
+    environment:
+      DATABASE_URL: postgresql://bankadmin:bankadmin@postgres:5432/bankdemo
+      DB_POOL_MAX: "100"
+      LOG_LEVEL: INFO
+    ports:
+      - "9000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  bankdemo-data:

@@ -1,0 +1,21 @@
+[project]
+name = "bank-heist-agent"
+version = "0.1.0"
+description = "Dapr workflow worker for the Bank Heist demo"
+requires-python = ">=3.11"
+dependencies = [
+  "dapr-agents>=0.5.0",
+  "dapr>=1.13.0",
+  "dapr-ext-workflow>=1.13.0",
+  "mcp>=1.2.0",
+  "fastapi>=0.110.0",
+  "uvicorn[standard]>=0.30.0",
+  "pydantic>=2.6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agent_worker"]

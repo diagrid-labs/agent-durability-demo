@@ -1,0 +1,37 @@
+image:
+  repository: postgres
+  tag: "16-alpine"
+  pullPolicy: IfNotPresent
+
+auth:
+  username: bankadmin
+  password: bankadmin
+  appDatabase: bankdemo
+  daprDatabase: dapr_state
+
+service:
+  port: 5432
+
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClassName: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+# Pin to the control zone so chaos buttons targeting agent zones never hit the DB.
+nodeSelector:
+  topology.kubernetes.io/zone: control
+
+tolerations: []
+
+# Demo defaults: $100 start, $200 target, 10 customers.
+seed:
+  startBalance: 100
+  targetBalance: 200

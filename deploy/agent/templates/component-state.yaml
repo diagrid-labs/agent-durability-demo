@@ -1,0 +1,15 @@
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: {{ .Values.stateStore.componentName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent.labels" . | nindent 4 }}
+spec:
+  type: state.postgresql
+  version: v1
+  metadata:
+    - name: connectionString
+      value: "host={{ .Values.stateStore.postgresHost }} port={{ .Values.stateStore.postgresPort }} user={{ .Values.stateStore.postgresUser }} password={{ .Values.stateStore.postgresPassword }} dbname={{ .Values.stateStore.postgresDatabase }} sslmode=disable"
+    - name: actorStateStore
+      value: "true"
