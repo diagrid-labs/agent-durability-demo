@@ -1,9 +1,18 @@
+import asyncio
 import contextlib
+import json
 import logging
 import os
+import re
+import time
+from collections import deque
+from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+import httpx
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field
@@ -11,6 +20,9 @@ from pydantic import BaseModel, Field
 from .chaos import Chaos, DroppedCallError
 from .db import Database
 from .orchestrator import Orchestrator
+from .pod_chaos import PodChaosController
+from .replenisher import Replenisher
+from .slot_tracker import SlotTracker
 
 logger = logging.getLogger("mcp_server")
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
@@ -18,6 +30,90 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 db = Database()
 chaos = Chaos()
 orch = Orchestrator()
+pod_chaos = PodChaosController()
+replenisher = Replenisher(orch)
+slots = SlotTracker()
+
+
+class TxBroadcaster:
+    """Fan-out of `tx_committed` notifications to connected WebSocket clients.
+
+    A single asyncpg LISTEN connection feeds an asyncio.Queue (see
+    Database.listen_transactions); the broadcast loop drains the queue and
+    pushes each event to every registered client. Slow/dead clients are
+    dropped silently — the demo prefers freshness over delivery guarantees."""
+
+    def __init__(self) -> None:
+        self._clients: set[WebSocket] = set()
+        self._lock = asyncio.Lock()
+
+    async def add(self, ws: WebSocket) -> None:
+        await ws.accept()
+        async with self._lock:
+            self._clients.add(ws)
+
+    async def remove(self, ws: WebSocket) -> None:
+        async with self._lock:
+            self._clients.discard(ws)
+
+    async def broadcast(self, message: dict[str, Any]) -> None:
+        if not self._clients:
+            return
+        text = json.dumps(message, default=str)
+        async with self._lock:
+            clients = list(self._clients)
+        dead: list[WebSocket] = []
+        for ws in clients:
+            try:
+                await ws.send_text(text)
+            except Exception:  # noqa: BLE001
+                dead.append(ws)
+        if dead:
+            async with self._lock:
+                for ws in dead:
+                    self._clients.discard(ws)
+
+
+broadcaster = TxBroadcaster()
+_tx_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=10_000)
+_tx_stop = asyncio.Event()
+
+# In-memory ring buffer feeding the UI's MCP-server card. Server-monotonic
+# `ts` so the UI's fmtClock renders mm:ss since server start.
+MCP_LOG: deque[dict[str, Any]] = deque(maxlen=60)
+_SERVER_STARTED = time.monotonic()
+_MCP_SEQ = 0
+_MCP_QUERIES = 0
+
+
+def _ts_ms() -> float:
+    return (time.monotonic() - _SERVER_STARTED) * 1000.0
+
+
+def log_mcp(kind: str, text: str) -> None:
+    global _MCP_SEQ, _MCP_QUERIES
+    _MCP_SEQ += 1
+    if kind == "req":
+        _MCP_QUERIES += 1
+    MCP_LOG.append({"id": _MCP_SEQ, "kind": kind, "text": text, "ts": _ts_ms()})
+
+
+async def _drain_tx_queue() -> None:
+    """Pump `tx_committed` payloads from the listener queue out to all
+    connected WebSocket clients. Each payload is the JSON string the
+    postgres trigger built — we forward as-is under `{"type": "tx", ...}`
+    so the UI can route on type."""
+    while True:
+        payload = await _tx_queue.get()
+        try:
+            data = json.loads(payload)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        data["type"] = "tx"
+        await broadcaster.broadcast(data)
+
+
+log_mcp("sys", "CONNECT mcp://postgres.bank.svc · session opened")
 mcp = FastMCP(
     "bank-heist-postgres",
     streamable_http_path="/",
@@ -29,8 +125,10 @@ mcp = FastMCP(
     transport_security=TransportSecuritySettings(
         allowed_hosts=[
             "mcp.bank-heist.svc.cluster.local",
+            "mcp.bank-heist.svc.cluster.local:80",
             "mcp.bank-heist.svc.cluster.local:8000",
             "mcp",
+            "mcp:80",
             "mcp:8000",
             "localhost",
             "localhost:8000",
@@ -46,9 +144,12 @@ mcp = FastMCP(
 @mcp.tool()
 async def list_customers() -> list[dict[str, Any]]:
     """List all customers with their tier, risk, current balance, and target."""
+    log_mcp("req", "SELECT id,name,tier,risk,balance,target FROM customers JOIN accounts")
     await chaos.maybe_delay()
     chaos.maybe_drop()
-    return await db.list_customers()
+    rows = await db.list_customers()
+    log_mcp("res", f"{len(rows)} rows")
+    return rows
 
 
 @mcp.tool()
@@ -78,23 +179,43 @@ async def credit_account(
     amount: float,
     tx_id: str,
     agent_id: str,
+    execution_run_id: int,
 ) -> dict[str, Any]:
-    """Idempotently credit `amount` to `customer_id`. `tx_id` must be deterministic
-    across workflow replays (e.g. `wf-{instance_id}-step-{n}`); duplicate tx_ids
-    are silently absorbed and return the existing balance with `applied=false`."""
+    """Idempotently credit `amount` to `customer_id` within `execution_run_id`.
+    `tx_id` must be deterministic across workflow replays (e.g.
+    `wf-{instance_id}-step-{n}`); the (execution_run_id, tx_id) pair is the
+    composite idempotency key — duplicates are absorbed and return the
+    existing balance with `applied=false`. Always pass through the
+    execution_run_id you received from get_next_task / process_task — never
+    invent one."""
+    log_mcp(
+        "req",
+        f"credit_account run={execution_run_id} cust={customer_id} +${amount} tx={tx_id}",
+    )
     await chaos.maybe_delay()
     chaos.maybe_drop()
-    return await db.credit_account(customer_id, amount, tx_id, agent_id)
+    result = await db.credit_account(
+        customer_id, amount, tx_id, agent_id, execution_run_id
+    )
+    tag = "applied" if result.get("applied") else "duplicate"
+    log_mcp("res", f"{tag} · cust={customer_id} balance=${result.get('balance')}")
+    return result
 
 
 @mcp.tool()
-async def get_next_task(requester: str = "") -> dict[str, Any]:
+async def get_next_task(requester: str = "", pod: str = "") -> dict[str, Any]:
     """Ask the orchestrator for the next pending credit task.
 
     Pass `requester` (your stable workflow identity, e.g. 'slot-7-task-3-r123')
     so replays return the same task instead of popping a new one. Returns
     either {done: true} when the queue is drained, or
-    {done: false, customer_id, tx_id, target, n}."""
+    {done: false, customer_id, tx_id, target, n}.
+
+    `pod` is the agent pod hostname; recorded so the heatmap pod-fleet view
+    can map slots to pods."""
+    agent_slot = _slot_from_requester(requester)
+    if agent_slot is not None and pod:
+        await slots.record(agent_slot, pod)
     return await orch.next_task(requester=requester or None)
 
 
@@ -106,16 +227,31 @@ async def report_done(tx_id: str, applied: bool) -> dict[str, Any]:
     return await orch.report_done(tx_id, applied)
 
 
+_SLOT_FROM_REQUESTER = re.compile(r"^agent-(\d+)-task-")
+
+
+def _slot_from_requester(requester: str | None) -> int | None:
+    """Extract heatmap slot N from `agent-NNN-task-K-r<run>` requester IDs.
+    Returns None for requester formats that don't carry a slot (legacy
+    callers, ad-hoc test scripts)."""
+    if not requester:
+        return None
+    m = _SLOT_FROM_REQUESTER.match(requester)
+    return int(m.group(1)) if m else None
+
+
 @mcp.tool()
-async def process_task(requester: str = "") -> dict[str, Any]:
+async def process_task(requester: str = "", pod: str = "") -> dict[str, Any]:
     """Atomically claim + balance-check + (credit if needed) + report a single
     task. Equivalent to GetNextTask → GetBalance → CreditAccount? → ReportDone
     rolled into one call. Cuts the workflow's activity count from ~17 to ~7,
     which matters when the Catalyst worker is far from a managed-workflow
     region.
 
-    Pass `requester` (your stable workflow identity) so replays return the
-    same task. Returns {done: true} when the queue is drained, otherwise
+    `requester` is your stable workflow identity (replays return the same
+    task). `pod` is the agent pod hostname; the server records `slot → pod`
+    so pod-kill chaos darkens the exact heatmap cells that lived on the
+    killed pod. Returns {done: true} when the queue is drained, otherwise
     {done: false, tx_id, customer_id, applied, balance_before, target}."""
     task = await orch.next_task(requester=requester or None)
     if task.get("done"):
@@ -124,13 +260,17 @@ async def process_task(requester: str = "") -> dict[str, Any]:
     customer_id = int(task["customer_id"])
     tx_id = str(task["tx_id"])
     target = float(task["target"])
+    execution_run_id = int(task["execution_run_id"])
+    agent_slot = _slot_from_requester(requester)
+    if agent_slot is not None and pod:
+        await slots.record(agent_slot, pod)
 
     applied = False
     balance: float | None = None
     error: str | None = None
     try:
         # Mirrors the chaos points that GetBalance / CreditAccount apply in
-        # multi-tool mode, so mode=single sees the same fault profile.
+        # Match the chaos points the multi-tool flow applies.
         await chaos.maybe_delay()
         balance_row = await db.get_balance(customer_id)
         if balance_row is None:
@@ -141,17 +281,18 @@ async def process_task(requester: str = "") -> dict[str, Any]:
                 await chaos.maybe_delay()
                 chaos.maybe_drop()
                 credit_result = await db.credit_account(
-                    customer_id, 1, tx_id, "banker"
+                    customer_id, 1, tx_id, "banker",
+                    execution_run_id, agent_slot,
                 )
                 applied = bool(credit_result.get("applied", True))
     except Exception as e:  # noqa: BLE001
-        # Without this, an MCP/DB hiccup leaks the in_flight slot forever
-        # because durabletask's default activity retry policy is max_attempts=1.
+        # On transient failure, release the slot instead of marking done.
         error = str(e)
     finally:
-        # Always release the orchestrator's in_flight lock so the queue can
-        # heal even when this activity ends up failing the workflow.
-        await orch.report_done(tx_id, applied)
+        if error is not None and not applied:
+            await orch.release_for_retry(tx_id)
+        else:
+            await orch.report_done(tx_id, applied)
 
     return {
         "done": False,
@@ -179,11 +320,32 @@ def build_app() -> FastAPI:
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
         await db.connect()
+        await orch.bootstrap(db)
+        # Start the listener (dedicated asyncpg conn) and the broadcaster
+        # drain loop. Both run for the lifetime of the process.
+        listener_task = asyncio.create_task(
+            db.listen_transactions(_tx_queue, _tx_stop), name="pg-listener"
+        )
+        broadcast_task = asyncio.create_task(
+            _drain_tx_queue(), name="ws-broadcast"
+        )
         async with mcp.session_manager.run():
             yield
+        _tx_stop.set()
+        for t in (listener_task, broadcast_task):
+            t.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await t
         await db.close()
 
     app = FastAPI(lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.mount("/mcp", mcp.streamable_http_app())
 
     @app.post("/chaos/drop")
@@ -203,7 +365,119 @@ def build_app() -> FastAPI:
 
     @app.get("/chaos")
     async def chaos_state() -> dict[str, Any]:
-        return chaos.snapshot()
+        snap = chaos.snapshot()
+        snap["pod_chaos"] = pod_chaos.snapshot()
+        return snap
+
+    class PodKillBody(BaseModel):
+        # Either pick a specific pod (so UI label = reality) or let the
+        # server pick `count` random survivors.
+        pod: str = Field(default="")
+        count: int = Field(default=1, ge=1, le=100)
+
+    @app.post("/chaos/pod-kill")
+    async def chaos_pod_kill(body: PodKillBody) -> dict[str, Any]:
+        if body.pod:
+            result = pod_chaos.kill_named(body.pod)
+        else:
+            result = pod_chaos.kill_random(body.count)
+        killed_pods: list[str] = result.get("killed", []) or []
+        affected_slots: list[int] = []
+        for pname in killed_pods:
+            affected_slots.extend(await slots.slots_for_pod(pname))
+        affected_slots = sorted(set(affected_slots))
+        if killed_pods:
+            log_mcp(
+                "chaos",
+                f"pod-kill: deleted {len(killed_pods)} pods · "
+                f"{', '.join(killed_pods)} · {len(affected_slots)} slots affected",
+            )
+            # Reclaim slots immediately so the replenisher backfills fast.
+            sweep = await orch.sweep(timeout_seconds=0.0)
+            result["released_after_kill"] = sweep.get("released")
+            if affected_slots:
+                await broadcaster.broadcast({
+                    "type": "slot-state",
+                    "slots": affected_slots,
+                    "status": "dead",
+                })
+        result["affected_slots"] = affected_slots
+        return result
+
+    @app.get("/chaos/pods")
+    async def chaos_pods() -> dict[str, Any]:
+        """List live agent pods with the current workflow count each is
+        servicing (per the slot tracker). UI consumes this to render
+        accurate `Kill 1 pod (~N agents)` labels and to pick a victim."""
+        live = pod_chaos.list_live_pods()
+        counts = await slots.pod_counts()
+        for entry in live:
+            entry["workflow_count"] = counts.get(entry["pod"], 0)
+        return {"pods": live, "available": pod_chaos.snapshot()["available"]}
+
+    # Brief zone-impact pulse so the UI can highlight the affected nodepool.
+    _AZ_IMPACT_TTL = 6.0  # seconds
+    _az_impacts: dict[str, float] = {}
+
+    def _recently_impacted_zones() -> dict[str, dict[str, Any]]:
+        now = time.monotonic()
+        return {
+            z: {"impacted_until_s": until, "remaining_s": max(0, until - now)}
+            for z, until in _az_impacts.items()
+            if until > now
+        }
+
+    class AzKillBody(BaseModel):
+        zone: str = Field(default="")
+
+    @app.post("/chaos/az-kill")
+    async def chaos_az_kill(body: AzKillBody) -> dict[str, Any]:
+        result = pod_chaos.kill_zone(body.zone or None)
+        killed_pods: list[str] = result.get("killed", []) or []
+        affected_slots: list[int] = []
+        for pname in killed_pods:
+            affected_slots.extend(await slots.slots_for_pod(pname))
+        affected_slots = sorted(set(affected_slots))
+        zone = result.get("zone")
+        if killed_pods:
+            log_mcp(
+                "chaos",
+                f"az-kill zone={zone}: deleted {len(killed_pods)} pods · "
+                f"{len(affected_slots)} slots affected",
+            )
+            sweep = await orch.sweep(timeout_seconds=0.0)
+            result["released_after_kill"] = sweep.get("released")
+            if affected_slots:
+                await broadcaster.broadcast({
+                    "type": "slot-state",
+                    "slots": affected_slots,
+                    "status": "dead",
+                })
+            if zone:
+                _az_impacts[zone] = time.monotonic() + _AZ_IMPACT_TTL
+                await broadcaster.broadcast({
+                    "type": "zone-state",
+                    "zone": zone,
+                    "status": "impacted",
+                    "ttl_seconds": _AZ_IMPACT_TTL,
+                })
+        result["affected_slots"] = affected_slots
+        return result
+
+    @app.get("/chaos/infra")
+    async def chaos_infra() -> dict[str, Any]:
+        """Operating environment: AKS nodepools and their nodes. The UI
+        renders this alongside the pod list so the audience sees the full
+        platform context (nodepool split, AZ spread, ready state).
+        `impacted_zones` tags zones whose pods were just AZ-killed; the UI
+        pulses those nodes/nodepool entries until the TTL expires."""
+        nodes = pod_chaos.list_nodes()
+        return {
+            "available": pod_chaos.snapshot()["available"],
+            "nodepools": pod_chaos.list_nodepools(nodes),
+            "nodes": nodes,
+            "impacted_zones": _recently_impacted_zones(),
+        }
 
     class OrchResetBody(BaseModel):
         customers: int = Field(default=10, ge=1, le=100)
@@ -220,7 +494,68 @@ def build_app() -> FastAPI:
 
     @app.get("/orch/status")
     async def orch_status() -> dict[str, Any]:
-        return await orch.status()
+        snap = await orch.status()
+        snap["mcp_queries"] = _MCP_QUERIES
+        snap["server_clock_ms"] = _ts_ms()
+        return snap
+
+    @app.get("/orch/customers")
+    async def orch_customers() -> list[dict[str, Any]]:
+        return await db.list_customers()
+
+    @app.get("/orch/mcp-log")
+    async def orch_mcp_log() -> dict[str, Any]:
+        return {"lines": list(MCP_LOG), "queries": _MCP_QUERIES}
+
+    @app.post("/orch/mcp-log/clear")
+    async def orch_mcp_log_clear() -> dict[str, Any]:
+        global _MCP_QUERIES
+        MCP_LOG.clear()
+        _MCP_QUERIES = 0
+        return {"cleared": True}
+
+    @app.websocket("/ws/telemetry")
+    async def telemetry_ws(ws: WebSocket) -> None:
+        """Push-based telemetry: every `tx_committed` notification arrives as
+        a `{"type":"tx", execution_run_id, tx_id, customer_id, amount,
+        agent_id, created_at}` frame. UI updates balances per-tx instead of
+        waiting for the next poll cycle."""
+        await broadcaster.add(ws)
+        try:
+            while True:
+                # We don't expect client-to-server messages, but `receive_text`
+                # keeps the connection alive and surfaces disconnects.
+                await ws.receive_text()
+        except WebSocketDisconnect:
+            pass
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            await broadcaster.remove(ws)
+
+    # Replenisher runs here (singleton); /schedule-one on the agent is stateless.
+    class AgentSpawnBody(BaseModel):
+        agents: int = Field(default=100, ge=1, le=500)
+        customers: int = Field(default=10, ge=1, le=100)
+        credits_per_customer: int = Field(default=100, ge=1, le=1000)
+        target: int = Field(default=200, ge=1, le=10_000)
+
+    @app.post("/agent/spawn")
+    async def agent_spawn(body: AgentSpawnBody) -> dict[str, Any]:
+        return await replenisher.start(
+            agents=body.agents,
+            customers=body.customers,
+            credits_per_customer=body.credits_per_customer,
+            target=body.target,
+        )
+
+    @app.post("/agent/stop")
+    async def agent_stop() -> dict[str, Any]:
+        return await replenisher.stop()
+
+    @app.get("/agent/status")
+    async def agent_status() -> dict[str, Any]:
+        return replenisher.status()
 
     class OrchSweepBody(BaseModel):
         timeout_seconds: float = Field(default=30.0, ge=1.0, le=600.0)
@@ -228,6 +563,73 @@ def build_app() -> FastAPI:
     @app.post("/orch/sweep")
     async def orch_sweep(body: OrchSweepBody) -> dict[str, Any]:
         return await orch.sweep(timeout_seconds=body.timeout_seconds)
+
+    # Catalyst routes service-invocation calls to /dapr/<method>.
+    _DAPR_APP_TOKEN = os.environ.get("DAPR_APP_TOKEN", "")
+
+    def _check_app_token(request: Request) -> None:
+        if not _DAPR_APP_TOKEN:
+            return
+        sent = request.headers.get("dapr-api-token", "")
+        if sent != _DAPR_APP_TOKEN:
+            raise HTTPException(401, "invalid or missing dapr-api-token")
+
+    class DaprProcessTaskBody(BaseModel):
+        requester: str = ""
+        pod: str = ""
+
+    class DaprGetNextTaskBody(BaseModel):
+        requester: str = ""
+        pod: str = ""
+
+    class DaprGetBalanceBody(BaseModel):
+        customer_id: int
+
+    class DaprCreditAccountBody(BaseModel):
+        customer_id: int
+        amount: float
+        tx_id: str
+        agent_id: str
+        execution_run_id: int
+
+    class DaprReportDoneBody(BaseModel):
+        tx_id: str
+        applied: bool
+
+    @app.post("/dapr/process_task")
+    async def dapr_process_task(body: DaprProcessTaskBody, request: Request) -> dict[str, Any]:
+        _check_app_token(request)
+        log_mcp("req", f"[SI] process_task requester={body.requester or '-'}")
+        result = await process_task(requester=body.requester, pod=body.pod)
+        tag = "applied" if result.get("applied") else ("done" if result.get("done") else "noop")
+        log_mcp("res", f"[SI] process_task {tag} tx={result.get('tx_id','-')}")
+        return result
+
+    @app.post("/dapr/get_next_task")
+    async def dapr_get_next_task(body: DaprGetNextTaskBody, request: Request) -> dict[str, Any]:
+        _check_app_token(request)
+        return await get_next_task(requester=body.requester, pod=body.pod)
+
+    @app.post("/dapr/get_balance")
+    async def dapr_get_balance(body: DaprGetBalanceBody, request: Request) -> dict[str, Any]:
+        _check_app_token(request)
+        return await get_balance(customer_id=body.customer_id)
+
+    @app.post("/dapr/credit_account")
+    async def dapr_credit_account(body: DaprCreditAccountBody, request: Request) -> dict[str, Any]:
+        _check_app_token(request)
+        return await credit_account(
+            customer_id=body.customer_id,
+            amount=body.amount,
+            tx_id=body.tx_id,
+            agent_id=body.agent_id,
+            execution_run_id=body.execution_run_id,
+        )
+
+    @app.post("/dapr/report_done")
+    async def dapr_report_done(body: DaprReportDoneBody, request: Request) -> dict[str, Any]:
+        _check_app_token(request)
+        return await report_done(tx_id=body.tx_id, applied=body.applied)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
@@ -244,6 +646,12 @@ def build_app() -> FastAPI:
     @app.exception_handler(DroppedCallError)
     async def _drop_handler(_, exc: DroppedCallError):  # type: ignore[no-untyped-def]
         raise HTTPException(503, str(exc))
+
+    # Serve the UI from / when ui-prototype/ is available. Override via UI_PROTOTYPE_DIR.
+    ui_env = os.environ.get("UI_PROTOTYPE_DIR")
+    ui_dir = Path(ui_env) if ui_env else Path(__file__).resolve().parents[3] / "ui-prototype"
+    if ui_dir.is_dir():
+        app.mount("/", StaticFiles(directory=str(ui_dir), html=True), name="ui")
 
     return app
 

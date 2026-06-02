@@ -1,3 +1,11 @@
+-- Workflow checkpoint database — used by the agent's Dapr state store
+-- component (`workflowstatestore`) when running locally with `dapr run`.
+-- In docker-compose-only mode (no Dapr) this DB is unused but created
+-- anyway so the same init script serves both local paths.
+CREATE DATABASE dapr_state;
+
+\connect bankdemo
+
 CREATE TABLE customers (
   id    INT PRIMARY KEY,
   name  TEXT NOT NULL,
@@ -12,14 +20,27 @@ CREATE TABLE accounts (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE execution_runs (
+  id                   SERIAL PRIMARY KEY,
+  started_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ended_at             TIMESTAMPTZ,
+  customers            INT NOT NULL,
+  credits_per_customer INT NOT NULL,
+  target               NUMERIC(10,2) NOT NULL
+);
+
 CREATE TABLE transactions (
-  tx_id       TEXT PRIMARY KEY,
-  customer_id INT NOT NULL REFERENCES customers(id),
-  amount      NUMERIC(10,2) NOT NULL,
-  agent_id    TEXT NOT NULL,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+  execution_run_id INT NOT NULL REFERENCES execution_runs(id),
+  tx_id            TEXT NOT NULL,
+  customer_id      INT NOT NULL REFERENCES customers(id),
+  amount           NUMERIC(10,2) NOT NULL,
+  agent_id         TEXT NOT NULL,
+  agent_slot       INT,            -- heatmap cell that committed the tx; null for non-slot-tagged calls
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (execution_run_id, tx_id)
 );
 CREATE INDEX transactions_customer_idx ON transactions(customer_id, created_at);
+CREATE INDEX transactions_run_idx ON transactions(execution_run_id, created_at);
 
 CREATE TABLE audit_log (
   id         BIGSERIAL PRIMARY KEY,
@@ -34,10 +55,12 @@ BEGIN
   PERFORM pg_notify(
     'tx_committed',
     json_build_object(
+      'execution_run_id', NEW.execution_run_id,
       'tx_id', NEW.tx_id,
       'customer_id', NEW.customer_id,
       'amount', NEW.amount,
       'agent_id', NEW.agent_id,
+      'agent_slot', NEW.agent_slot,
       'created_at', NEW.created_at
     )::text
   );
@@ -63,3 +86,7 @@ INSERT INTO customers (id, name, tier, risk) VALUES
 
 INSERT INTO accounts (customer_id, balance, target)
 SELECT id, 100, 200 FROM customers;
+
+-- Seed an initial execution_run so the orchestrator has a current run on boot.
+INSERT INTO execution_runs (customers, credits_per_customer, target)
+VALUES (10, 100, 200);

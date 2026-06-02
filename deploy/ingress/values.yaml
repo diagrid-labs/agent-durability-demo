@@ -1,0 +1,22 @@
+# Hostname the Ingress responds to. Leave as empty string to match all hosts
+# (useful when you only have the LoadBalancer IP and no DNS yet).
+host: ""
+
+# IngressClass — ingress-nginx installs as "nginx" by default.
+ingressClassName: nginx
+
+# The MCP service owns every UI/API path: it serves the static UI at `/`,
+# the MCP transport at `/mcp/`, orchestrator routes at `/orch/*`, chaos
+# toggles at `/chaos/*`, and a reverse-proxy to the agent worker at
+# `/agent/*`. So all paths route to the same backend.
+backend:
+  service:
+    name: mcp
+    port: 8000
+
+annotations:
+  # MCP streamable-HTTP needs request/response buffering off so SSE / chunked
+  # transfers reach the client immediately.
+  nginx.ingress.kubernetes.io/proxy-buffering: "off"
+  nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+  nginx.ingress.kubernetes.io/proxy-send-timeout: "300"

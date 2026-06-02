@@ -1,0 +1,12 @@
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: workflowstatestore
+spec:
+  type: state.postgresql
+  version: v1
+  metadata:
+    - name: connectionString
+      value: "host=localhost port=5432 user=bankadmin password=bankadmin dbname=dapr_state sslmode=disable"
+    - name: actorStateStore
+      value: "true"

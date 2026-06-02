@@ -62,7 +62,13 @@ class StubLLM(ChatClientBase):
         # Single-tool mode: one ProcessTask call, then stop.
         if mode == "single":
             if last_tool_name is None:
-                return self._tool_call("ProcessTask", {"requester": requester})
+                # Pod hostname forwarded so MCP can map slot→pod for pod-kill
+                # chaos visualization. Empty string outside k8s is fine.
+                import os as _os
+                return self._tool_call(
+                    "ProcessTask",
+                    {"requester": requester, "pod": _os.environ.get("HOSTNAME", "")},
+                )
             if last_tool_name == "ProcessTask":
                 resp = self._parse_json(last_tool_content) or {}
                 if resp.get("done"):
@@ -104,6 +110,7 @@ class StubLLM(ChatClientBase):
                     "amount": 1,
                     "tx_id": str(task["tx_id"]),
                     "agent_id": "banker",
+                    "execution_run_id": int(task["execution_run_id"]),
                 },
             )
 

@@ -5,7 +5,7 @@ common:
   enableAppHealthCheck: false
   logLevel: info
 apps:
-  - appID: agent-worker
+  - appID: bank-agent-creditor
     appDirPath: ./services/agent
     daprHTTPPort: 3500
     appPort: 8000

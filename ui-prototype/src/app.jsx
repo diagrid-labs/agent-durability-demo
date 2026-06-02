@@ -33,10 +33,10 @@ function App() {
       height: '100vh', width: '100vw',
       display: 'grid',
       gridTemplate: `
-        "top    top    top"    auto
-        "count  count  count"  auto
-        "cust   agents chaos"  minmax(0, 1fr)
-        / minmax(0, 1fr) minmax(0, 1.4fr) minmax(240px, 280px)
+        "top    top    top    top"    auto
+        "count  count  count  count"  auto
+        "cust   agents fleet  side"   minmax(0, 1fr)
+        / minmax(220px, 0.9fr) minmax(360px, 1.3fr) minmax(220px, 0.9fr) minmax(280px, 1fr)
       `,
       gap: 10,
       paddingBottom: 10,
@@ -57,9 +57,14 @@ function App() {
           <AgentsGrid state={state} />
         </div>
       </div>
-      <div style={{ gridArea: 'chaos', minWidth: 0, minHeight: 0, height: '100%', display: 'flex', paddingRight: 14 }}>
+      <div style={{ gridArea: 'fleet', minWidth: 0, minHeight: 0, height: '100%', display: 'flex' }}>
         <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
-          <ChaosPanel feed={feed} state={state} />
+          <PodFleet state={state} />
+        </div>
+      </div>
+      <div style={{ gridArea: 'side', minWidth: 0, minHeight: 0, height: '100%', display: 'flex', paddingRight: 14 }}>
+        <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+          <Sidebar feed={feed} state={state} />
         </div>
       </div>
 

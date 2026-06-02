@@ -1,26 +1,49 @@
 image:
-  repository: bank-heist/agent
+  repository: tezizzm/bank-heist-agent
   tag: "0.1.0"
-  pullPolicy: IfNotPresent
+  # Always-pull so demo iteration on the same tag picks up freshly pushed
+  # images without bumping the tag. Switch to IfNotPresent for production.
+  pullPolicy: Always
 
-# Step 3: one worker. Step 6 will scale this up.
-replicaCount: 1
+# One pod per AZ — the chart's topology spread (see deployment.yaml) splits
+# them across `topology.kubernetes.io/zone`. Each pod hosts many concurrent
+# workflow instances; bump only if the agents nodepool grows. Set to match
+# the number of AZs in the agents nodepool (e.g. 3 if your sub has 3 AZs,
+# 2 if it only has 2).
+replicaCount: 2
 
 service:
   port: 8000
 
 mcp:
   # Trailing slash matters — FastMCP redirects /mcp → /mcp/, the client doesn't
-  # follow POST redirects.
-  url: http://mcp.bank-heist.svc.cluster.local:8000/mcp/
+  # follow POST redirects. Port omitted = default 80 (the MCP Service port).
+  url: http://mcp.bank-heist.svc.cluster.local/mcp/
+  # Base URL (no path) — agent worker hits this for /orch/reset, /orch/sweep,
+  # /orch/status from its replenisher loop. Distinct from `url` above which is
+  # the MCP streamable-http endpoint.
+  httpBase: http://mcp.bank-heist.svc.cluster.local
+  # When true, the agent's `call_tool` routes through Dapr service invocation
+  # to the `daprAppId` instead of plain httpx to `mcp.url`. Requires the MCP
+  # chart's `catalyst.enabled=true` AND a bank-mcp-server app-id provisioned
+  # in Catalyst with its application endpoint pointing at MCP's public LB.
+  # Makes the agent→MCP edge visible in Catalyst's app graph.
+  useDaprInvoke: false
+  daprAppId: bank-mcp-server
 
 # Workflow state store (Dapr Component, written by this chart).
+# In Catalyst mode (Cloud or Self-Hosted), the component is provisioned in
+# the Catalyst project via `diagrid kv create` instead — set `create: false`
+# so this chart doesn't try to render an in-cluster CRD that would conflict.
+# `componentName` stays meaningful in both modes: it's the env var
+# (`AGENT_STATE_STORE`) the agent uses to pick a state store by name.
 stateStore:
+  create: true
   componentName: workflowstatestore
   postgresHost: postgres.bank-heist.svc.cluster.local
   postgresPort: 5432
   postgresDatabase: dapr_state
-  # Inline credentials for the demo. See DECISIONS.md #17.
+  # Inline credentials for the demo. Unused when create=false.
   postgresUser: bankadmin
   postgresPassword: bankadmin
 
@@ -32,26 +55,55 @@ agent:
     mode: stub
     model: gpt-4o-mini
     # Name of a Secret with key OPENAI_API_KEY. Only required when mode=real.
-    # dapr-agents 1.0.1 has no built-in Anthropic client (see DECISIONS.md #19).
     apiKeySecret: ""
+
+# Concurrency knobs for the durabletask runtime. Defaults keep 100 in-flight
+# workflows responsive while leaving headroom on a 2-vCPU node.
+concurrency:
+  maxActivities: 200
+  maxOrchestrations: 200
+  threadPoolWorkers: 128
 
 resources:
   requests:
-    cpu: 100m
-    memory: 256Mi
+    cpu: 200m
+    memory: 384Mi
   limits:
-    cpu: 1000m
-    memory: 512Mi
+    cpu: 1500m
+    memory: 768Mi
 
-# Agent workers run in chaos zones — these become the chaos targets.
+# Agent workers run in the agents nodepool — chaos targets.
 nodeSelector:
   bank-heist.role: agents
 
 tolerations: []
 
-dapr:
+# Real Azure-AZ spread for the AZ-outage chaos story. AKS sets this label
+# automatically on each node based on its `--zones` membership.
+topologySpread:
   enabled: true
-  appId: agent-worker
+  maxSkew: 1
+  topologyKey: topology.kubernetes.io/zone
+  whenUnsatisfiable: DoNotSchedule
+
+dapr:
+  # Set false when running with Catalyst (Cloud or Self-Hosted) since pods
+  # don't get a daprd sidecar in those modes — the SDK talks to the Catalyst
+  # endpoint directly. Annotations are no-ops without a Dapr injector but
+  # we omit them for cleanliness.
+  enabled: true
+  appId: bank-agent-creditor
   appPort: 8000
   appProtocol: http
   logLevel: info
+
+# Catalyst connection. `apiTokenSecret` must exist in the namespace before install.
+catalyst:
+  enabled: false
+  httpEndpoint: ""
+  grpcEndpoint: ""
+  apiTokenSecret: catalyst-agent-worker
+  apiTokenSecretKey: DAPR_API_TOKEN
+  # Needed in same-cluster Catalyst Self-Hosted to bypass AKS hairpin NAT.
+  # Each entry: {ip: <string>, hostnames: [<list>]}.
+  hostAliases: []

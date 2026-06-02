@@ -14,6 +14,9 @@ spec:
       labels:
         {{- include "mcp.labels" . | nindent 8 }}
     spec:
+      {{- if .Values.rbac.enabled }}
+      serviceAccountName: {{ include "mcp.name" . }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -34,6 +37,10 @@ spec:
               value: {{ .Values.logLevel | quote }}
             - name: DB_POOL_MAX
               value: {{ .Values.postgres.poolMax | quote }}
+            - name: AGENT_HTTP_BASE
+              value: {{ .Values.agent.httpBase | quote }}
+            - name: POD_CHAOS_LABEL_SELECTOR
+              value: {{ .Values.podChaos.labelSelector | quote }}
             - name: PGUSER
               valueFrom:
                 secretKeyRef:
@@ -46,6 +53,20 @@ spec:
                   key: POSTGRES_PASSWORD
             - name: DATABASE_URL
               value: "postgresql://$(PGUSER):$(PGPASSWORD)@{{ .Values.postgres.host }}:{{ .Values.postgres.port }}/{{ .Values.postgres.database }}"
+            {{- /* `(.Values.catalyst).enabled` is nil-safe — won't blow up on
+                  `helm upgrade --reuse-values` from a release whose stored
+                  values predate the catalyst block. */}}
+            {{- if (.Values.catalyst).enabled }}
+            # Catalyst mode: MCP is registered as a Diagrid app-id and
+            # receives Dapr service-invocation calls from the agent at
+            # /dapr/<method>. The app token is what Catalyst includes in
+            # `dapr-api-token` on inbound calls; we validate it server-side.
+            - name: DAPR_APP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.catalyst.appTokenSecret }}
+                  key: {{ .Values.catalyst.appTokenSecretKey }}
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /healthz

@@ -6,10 +6,15 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-COPY pyproject.toml ./
+# Build context is the repo root so we can bake the UI into the same image.
+# (Locally, compose bind-mounts ui-prototype/ instead — see local/compose.yaml.)
+COPY services/mcp/pyproject.toml ./
 RUN pip install --no-cache-dir .
 
-COPY . ./
+COPY services/mcp/ ./
+COPY ui-prototype/ /ui-prototype/
+
+ENV UI_PROTOTYPE_DIR=/ui-prototype
 
 EXPOSE 8000
 

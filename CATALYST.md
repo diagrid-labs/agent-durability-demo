@@ -2,6 +2,9 @@
 
 Run the dapr-agents Bank Heist demo on your laptop with the agent's Dapr APIs proxied through **Diagrid Catalyst**. Workflow runtime, state store, and placement run in Catalyst; the agent process, MCP server, and bank Postgres run locally.
 
+> For a k8s deploy that uses Catalyst Cloud (no local `diagrid dev run`), see [CATALYST_CLOUD.md](./CATALYST_CLOUD.md).
+> For the same k8s deploy with upstream Dapr instead of Catalyst, see the [main README](./README.md#deploying-to-kubernetes).
+
 ## Architecture
 
 ```
@@ -38,7 +41,7 @@ dapr-agents needs both managed workflow **and** agent infrastructure (managed co
 
 ```bash
 diagrid login
-diagrid project create bank-heist \
+diagrid project create bank-heist-local \
   -r diagrid-aws-eu-west \
   --enable-managed-workflow \
   --enable-agent-infrastructure \
@@ -51,18 +54,14 @@ Create the agent's App ID:
 diagrid appid create agent-worker --wait
 ```
 
-The `DurableAgent` in `services/agent/agent_worker/agent.py` looks up a state store named `workflowstatestore`. Provision it as a managed Diagrid KV:
+`--enable-agent-infrastructure` auto-provisions a managed state store named `agent-memory`. Reuse that for the workflow state store — no extra `diagrid kv create` needed. Verify:
 
 ```bash
-diagrid kv create workflowstatestore --scopes agent-worker --wait
+diagrid project get bank-heist-local   # ManagedWorkflowStore: enabled (+ agent infra)
+diagrid component list                 # agent-memory state.diagrid all app identities ready
 ```
 
-Verify:
-
-```bash
-diagrid project get bank-heist  # ManagedWorkflowStore: enabled (+ agent infra)
-diagrid component list          # workflowstatestore  state.diagrid  agent-worker  ready
-```
+When invoking the agent in step 4, set `AGENT_STATE_STORE=agent-memory` so the SDK looks up the right component.
 
 ## 2. Bring up local supporting services
 
@@ -94,11 +93,20 @@ cd -
 From the repo root:
 
 ```bash
-diagrid dev run --file dapr.yaml --project bank-heist \
+diagrid dev run --file dapr.yaml --project bank-heist-local \
   --skip-managed-kv --skip-managed-pubsub --skip-default-resiliency
 ```
 
-The `--skip-*` flags prevent `dev run` from auto-creating duplicate default components on top of the ones we already provisioned in §1.
+The `--skip-*` flags prevent `dev run` from auto-creating duplicate default components on top of the ones agent-infrastructure already provisioned in §1.
+
+Local Catalyst historically requires the short alias `agent_workflow` for the schedule name, while every other runtime target uses the fully-qualified `dapr.agents.Banker.workflow`. The agent code defaults to the qualified name; set the env override here:
+
+```bash
+# In dapr.yaml's `env:` section, or via shell before `diagrid dev run`:
+export FORCE_WORKFLOW_NAME=agent_workflow
+```
+
+If you forget this, scheduled workflows will fail with `OrchestratorNotRegisteredError`. See [NOTES_FOR_DAPR_AGENTS.md](./NOTES_FOR_DAPR_AGENTS.md) for the engineering follow-up on this discrepancy.
 
 This will:
 1. Authenticate against your `bank-heist` project.
@@ -140,14 +148,15 @@ docker compose -f local/compose.yaml down -v
 To delete the Catalyst project entirely:
 
 ```bash
-diagrid project delete bank-heist
+diagrid project delete bank-heist-local
 ```
 
 > Re-provisioning is the only way to add `--enable-agent-infrastructure` to a project — there's no `project update` for it.
 
 ## Notes & gotchas
 
-- **`max_iterations=300`** in `services/agent/agent_worker/agent.py:75` caps the stub agent at ~150 credits per workflow (it alternates `get_balance` / `credit_account`). Bump it for higher targets.
-- **Real LLM mode** (`STUB_LLM=false`, with `OPENAI_API_KEY` set in `dapr.yaml`'s `env:`) only works with a model that emits OpenAI-compatible structured tool calls. Models that emit Harmony-formatted tool calls as text content will exit after one turn.
-- **MCP_URL must end in a trailing slash** (`/mcp/`). FastMCP redirects `/mcp` → `/mcp/`, and the streamable-http client doesn't follow POST redirects.
-- **Postgres data persists** across `docker compose down` unless `-v` is passed. The `transactions` table accumulates across runs — clear it with `TRUNCATE transactions, audit_log RESTART IDENTITY` if you want a clean count.
+- **`max_iterations=300`** in `services/agent/agent_worker/agent.py` caps the stub agent at ~150 credits per workflow (it alternates `get_balance` / `credit_account` in multi-mode). The default single-mode `process_task` path only takes one iteration per task so this rarely matters now.
+- **Real LLM mode** (`STUB_LLM=false`, with `OPENAI_API_KEY` set in `dapr.yaml`'s `env:`) only works with a model that emits OpenAI-compatible structured tool calls.
+- **`MCP_URL` must end in a trailing slash** (`/mcp/`). FastMCP redirects `/mcp` → `/mcp/`, and the streamable-http client doesn't follow POST redirects.
+- **Workflow name** is the most common stumbling block — see [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#orchestratornotregistererror-a-x-orchestrator-was-not-registered).
+- **Postgres data persists** across `docker compose down` unless `-v` is passed. The `transactions` table accumulates across runs — clear with `TRUNCATE transactions, execution_runs RESTART IDENTITY CASCADE` if you want a clean count, or just hit Reset in the UI which starts a fresh `execution_run`.

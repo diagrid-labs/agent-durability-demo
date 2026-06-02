@@ -1,3 +1,4 @@
+import asyncio
 import os
 from decimal import Decimal
 from typing import Any
@@ -72,24 +73,26 @@ class Database:
         amount: float,
         tx_id: str,
         agent_id: str,
+        execution_run_id: int,
+        agent_slot: int | None = None,
     ) -> dict[str, Any]:
-        # Single SQL transaction. INSERT … ON CONFLICT DO NOTHING is the
-        # idempotency gate — if a previous invocation already wrote this tx_id
-        # (workflow replay after a kill), the INSERT returns nothing and we
-        # skip the UPDATE, returning the existing balance.
+        # INSERT ... ON CONFLICT DO NOTHING is the per-run idempotency gate.
         async with self.pool.acquire() as conn:
             async with conn.transaction():
                 inserted = await conn.fetchval(
                     """
-                    INSERT INTO transactions (tx_id, customer_id, amount, agent_id)
-                    VALUES ($1, $2, $3, $4)
-                    ON CONFLICT (tx_id) DO NOTHING
+                    INSERT INTO transactions
+                        (execution_run_id, tx_id, customer_id, amount, agent_id, agent_slot)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    ON CONFLICT (execution_run_id, tx_id) DO NOTHING
                     RETURNING tx_id
                     """,
+                    execution_run_id,
                     tx_id,
                     customer_id,
                     Decimal(str(amount)),
                     agent_id,
+                    agent_slot,
                 )
                 if inserted is None:
                     balance = await conn.fetchval(
@@ -119,3 +122,91 @@ class Database:
                     "customer_id": customer_id,
                     "balance": float(balance),
                 }
+
+    async def listen_transactions(
+        self, queue: asyncio.Queue, stop_event: asyncio.Event
+    ) -> None:
+        """Hold a dedicated connection that runs `LISTEN tx_committed` and
+        pushes every notification payload onto `queue`. Auto-reconnects until
+        `stop_event` is set. Each payload is the JSON string emitted by the
+        notify_transaction() trigger in init.sql."""
+        dsn = os.environ["DATABASE_URL"]
+        loop = asyncio.get_event_loop()
+        while not stop_event.is_set():
+            conn = None
+            try:
+                conn = await asyncpg.connect(dsn=dsn)
+
+                def _on_notify(_conn, _pid, _channel, payload):
+                    loop.call_soon_threadsafe(queue.put_nowait, payload)
+
+                await conn.add_listener("tx_committed", _on_notify)
+                await stop_event.wait()
+                return
+            except Exception:
+                # Connection dropped, retry with a small backoff.
+                await asyncio.sleep(1.0)
+            finally:
+                if conn is not None:
+                    try:
+                        await conn.close()
+                    except Exception:
+                        pass
+
+    async def count_transactions(self, execution_run_id: int) -> int:
+        """Total credits committed under this execution run. Authoritative
+        source for the UI's `applied_total` counter — keeps the dashboard in
+        sync with the DB even when a workflow crashes after credit_account
+        but before report_done."""
+        val = await self.pool.fetchval(
+            "SELECT COUNT(*) FROM transactions WHERE execution_run_id = $1",
+            execution_run_id,
+        )
+        return int(val or 0)
+
+    async def current_execution_run(self) -> dict[str, Any]:
+        row = await self.pool.fetchrow(
+            """
+            SELECT id, started_at, ended_at, customers, credits_per_customer, target
+            FROM execution_runs
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        )
+        if row is None:
+            raise RuntimeError("no execution_runs row — schema seed missing")
+        return _to_jsonable(row)  # type: ignore[return-value]
+
+    async def start_execution_run(
+        self,
+        customers: int,
+        credits_per_customer: int,
+        target: float,
+    ) -> dict[str, Any]:
+        """Mark any open run as ended, insert a new run, reset balances to the
+        per-customer starting point (target - credits_per_customer)."""
+        start_balance = target - credits_per_customer
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "UPDATE execution_runs SET ended_at = now() WHERE ended_at IS NULL"
+                )
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO execution_runs (customers, credits_per_customer, target)
+                    VALUES ($1, $2, $3)
+                    RETURNING id, started_at, ended_at, customers, credits_per_customer, target
+                    """,
+                    customers,
+                    credits_per_customer,
+                    Decimal(str(target)),
+                )
+                await conn.execute(
+                    """
+                    UPDATE accounts
+                    SET balance = $1, target = $2, updated_at = now()
+                    """,
+                    Decimal(str(start_balance)),
+                    Decimal(str(target)),
+                )
+        return _to_jsonable(row)  # type: ignore[return-value]

@@ -1,12 +1,31 @@
 image:
-  repository: bank-heist/mcp
+  repository: tezizzm/bank-heist-mcp
   tag: "0.1.0"
-  pullPolicy: IfNotPresent
+  # Always-pull so demo iteration on the same tag picks up freshly pushed
+  # images without bumping the tag. Switch to IfNotPresent for production.
+  pullPolicy: Always
 
-replicaCount: 2
+replicaCount: 1
 
 service:
-  port: 8000
+  # External-facing port. 80 lets URLs omit the explicit port. The Service's
+  # targetPort routes to the MCP container's named `http` port (8000)
+  # regardless of what `port` is set to. Internal callers use the same
+  # `port` value via the cluster DNS — keep it consistent so there's one
+  # port in mental model for the whole demo.
+  port: 80
+  # ClusterIP keeps the service internal — pair it with an ingress (or use
+  # `kubectl port-forward`) for external access. LoadBalancer asks the cloud
+  # provider (AKS, EKS, GKE) to provision a public IP and a managed L4 LB
+  # pointed at this Service. Demo-friendly default in `CATALYST_CLOUD.md`
+  # uses LoadBalancer for one-step external access; production deploys with
+  # multiple services usually want ClusterIP + a shared ingress.
+  type: ClusterIP
+  # AKS-only: if set AND `type: LoadBalancer`, the chart annotates the
+  # Service so AKS gives the public IP a `<label>.<region>.cloudapp.azure.com`
+  # DNS name. Must be unique within the Azure region. Leave empty to use
+  # the raw IP.
+  azureDnsLabel: ""
 
 # Connection to the Postgres chart's Service.
 postgres:
@@ -15,6 +34,11 @@ postgres:
   database: bankdemo
   credentialsSecret: postgres-credentials
   poolMax: 20
+
+# In-cluster URL of the agent Service — used by `/agent/*` proxy routes so the
+# UI (served same-origin from this Pod) can drive the agent worker without CORS.
+agent:
+  httpBase: http://agent.bank-heist.svc.cluster.local:8000
 
 logLevel: INFO
 
@@ -26,8 +50,24 @@ resources:
     cpu: 500m
     memory: 256Mi
 
-# Pin to control zone — never a chaos target.
+# Control nodepool — never a chaos target.
 nodeSelector:
-  topology.kubernetes.io/zone: control
+  bank-heist.role: platform
 
 tolerations: []
+
+# RBAC for the /chaos/pod-kill endpoint. The MCP server lists + deletes pods
+# matching `podChaos.labelSelector` inside its own namespace. Disable for
+# read-only deployments.
+rbac:
+  enabled: true
+
+podChaos:
+  labelSelector: "app.kubernetes.io/name=agent"
+
+# Validates Catalyst service-invocation calls on /dapr/* routes.
+# Token must match the bank-mcp-server "Application token" set in Catalyst.
+catalyst:
+  enabled: false
+  appTokenSecret: catalyst-mcp-server
+  appTokenSecretKey: DAPR_APP_TOKEN

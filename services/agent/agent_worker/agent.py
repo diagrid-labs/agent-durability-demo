@@ -23,12 +23,18 @@ async def get_balance(customer_id: int) -> dict[str, Any]:
 
 @tool
 async def credit_account(
-    customer_id: int, amount: int, tx_id: str, agent_id: str
+    customer_id: int,
+    amount: int,
+    tx_id: str,
+    agent_id: str,
+    execution_run_id: int,
 ) -> dict[str, Any]:
-    """Idempotently credit an amount to a customer's account.
+    """Idempotently credit an amount to a customer's account within an
+    execution run.
 
-    tx_id must be unique per logical credit step; duplicate tx_ids are
-    absorbed by the database and return applied=false."""
+    The (execution_run_id, tx_id) pair is the idempotency key — duplicates
+    are absorbed by the database and return applied=false. Always pass
+    through the execution_run_id from GetNextTask; never invent one."""
     return await call_tool(
         "credit_account",
         {
@@ -36,6 +42,7 @@ async def credit_account(
             "amount": amount,
             "tx_id": tx_id,
             "agent_id": agent_id,
+            "execution_run_id": execution_run_id,
         },
     )
 
@@ -43,10 +50,16 @@ async def credit_account(
 @tool
 async def get_next_task(requester: str) -> dict[str, Any]:
     """Ask the orchestrator for the next pending credit task. Pass your
-    workflow identity (e.g. 'slot-7-task-3-r123') as `requester` so replays
-    return the same task. Returns {done: true} when the queue is drained,
-    otherwise {done: false, customer_id, tx_id, target, n}."""
-    return await call_tool("get_next_task", {"requester": requester})
+    workflow identity (e.g. 'agent-007-task-3-r123') as `requester` so
+    replays return the same task. Returns {done: true} when the queue is
+    drained, otherwise {done: false, customer_id, tx_id, target, n}.
+
+    Also forwards the pod hostname so the MCP server records slot→pod for
+    the heatmap fleet view."""
+    return await call_tool(
+        "get_next_task",
+        {"requester": requester, "pod": os.environ.get("HOSTNAME", "")},
+    )
 
 
 @tool
@@ -58,8 +71,15 @@ async def report_done(tx_id: str, applied: bool) -> dict[str, Any]:
 @tool
 async def process_task(requester: str) -> dict[str, Any]:
     """Atomic single-call alternative to GetNextTask + GetBalance +
-    CreditAccount + ReportDone. Pass your workflow identity as `requester`."""
-    return await call_tool("process_task", {"requester": requester})
+    CreditAccount + ReportDone. Pass your workflow identity as `requester`.
+
+    Also forwards the pod's hostname so the MCP server can track which agent
+    pod is currently servicing which heatmap slot — used to drive accurate
+    pod-kill chaos visualization."""
+    return await call_tool(
+        "process_task",
+        {"requester": requester, "pod": os.environ.get("HOSTNAME", "")},
+    )
 
 
 class _SilentFormatter:
@@ -89,48 +109,31 @@ def _build_llm():
 
 
 def build_agent() -> DurableAgent:
-    # Catalyst's agent infrastructure auto-provisions `agent-memory` (state.diagrid).
-    # In sidecar/k8s mode the Helm chart writes a Component named `agent-memory`
-    # that points at the Postgres state store, so the same code path works there.
     state_store = StateStoreService(
         store_name=os.environ.get("AGENT_STATE_STORE", "agent-memory"),
         key_prefix="banker-state",
     )
     agent = DurableAgent(
-        # Top-level name= is required when Catalyst agent infrastructure is
-        # active: dapr-agents auto-discovers `agent-pubsub` and constructs an
-        # agent topic from the local `name` param, not from profile.name.
+        # Required for Catalyst agent-infra (used to derive the pubsub topic).
         name="banker",
         profile=AgentProfileConfig(
             name="banker",
             role="Banker worker",
             goal="Process credit tasks from the orchestrator until the queue is empty",
             instructions=[
-                "You process exactly ONE credit task and then stop.",
-                "Your prompt contains 'requester=<id>' (your stable workflow "
-                "identity) and 'mode=<multi|single>'.",
-                "If mode=single: call ProcessTask with requester=<your id>. "
-                "The result is either {done: true} (respond with 'no work "
-                "remaining') or {done: false, tx_id, customer_id, applied}. "
-                "Then respond with 'task complete' and stop.",
-                "If mode=multi (default):",
-                "  1. Call GetNextTask with requester=<your id>. The result "
-                "is either {done: true} (respond 'no work remaining') or "
-                "{done: false, customer_id, tx_id, target, n}.",
-                "  2. Call GetBalance with the customer_id from the task.",
-                "  3. If balance >= target, call ReportDone with "
-                "applied=false.",
-                "  4. Otherwise call CreditAccount with customer_id, "
-                "amount=1, the task's tx_id, agent_id='banker', then call "
-                "ReportDone with applied=true.",
-                "  5. Respond with 'task complete' and stop.",
-                "Never invent a tx_id — always use the one from GetNextTask "
-                "or ProcessTask. Idempotency depends on it.",
+                "You are a banker agent. Credit one customer account by $1, then stop.",
+                "Your prompt contains 'requester=<id>' (your stable workflow identity).",
+                "Steps:",
+                "1. GetNextTask(requester=<your id>). If {done:true}, respond 'no work remaining'.",
+                "2. GetBalance(customer_id from the task).",
+                "3. If balance >= target, ReportDone(tx_id, applied=false).",
+                "4. Else CreditAccount(customer_id, amount=1, tx_id, agent_id='banker', execution_run_id), then ReportDone(tx_id, applied=true).",
+                "5. Respond 'task complete' and stop.",
+                "Always use the tx_id and execution_run_id from GetNextTask. Never invent them.",
             ],
         ),
         state=AgentStateConfig(store=state_store),
-        # Single-task agents need only ~7 LLM iterations. 50 is generous.
-        execution=AgentExecutionConfig(max_iterations=50),
+        execution=AgentExecutionConfig(max_iterations=10),
         tools=[get_balance, credit_account, get_next_task, report_done, process_task],
         llm=_build_llm(),
     )

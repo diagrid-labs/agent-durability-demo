@@ -1,0 +1,7 @@
+# Expose the gateway on standard 80/443 so the diagrid CLI's default :443 works.
+# Apply with: diagrid region deploy <region> --values-file <this-file>
+gateway:
+  envoy:
+    service:
+      port: 80
+      httpsPort: 443

@@ -15,7 +15,9 @@ service:
 persistence:
   enabled: true
   size: 1Gi
-  storageClassName: ""
+  # AKS default-managed CSI driver. Override to "default" for older clusters,
+  # or "" to fall back to whatever the cluster's default class is.
+  storageClassName: managed-csi
 
 resources:
   requests:
@@ -25,9 +27,10 @@ resources:
     cpu: 1000m
     memory: 1Gi
 
-# Pin to the control zone so chaos buttons targeting agent zones never hit the DB.
+# Pin to the control nodepool so chaos targeting the agents pool never
+# accidentally clips the source of truth.
 nodeSelector:
-  topology.kubernetes.io/zone: control
+  bank-heist.role: platform
 
 tolerations: []
 

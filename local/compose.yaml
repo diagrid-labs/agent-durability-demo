@@ -18,11 +18,20 @@ services:
 
   mcp:
     build:
-      context: ../services/mcp
+      context: ..
+      dockerfile: services/mcp/Dockerfile
     environment:
       DATABASE_URL: postgresql://bankadmin:bankadmin@postgres:5432/bankdemo
       DB_POOL_MAX: "100"
       LOG_LEVEL: INFO
+      UI_PROTOTYPE_DIR: /ui-prototype
+      # Agent worker runs on the host via `diagrid dev run` (see CATALYST.md);
+      # the UI proxies `/agent/*` requests through this service to reach it.
+      AGENT_HTTP_BASE: http://host.docker.internal:8000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ../ui-prototype:/ui-prototype:ro
     ports:
       - "9000:8000"
     depends_on:

@@ -1,0 +1,19 @@
+Bank Heist Ingress installed.
+
+Get the public IP assigned to ingress-nginx:
+
+    kubectl -n ingress-nginx get svc ingress-nginx-controller \
+      -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+
+{{- if .Values.host }}
+Then point DNS for {{ .Values.host | quote }} at that IP and open:
+
+    http://{{ .Values.host }}/
+{{- else }}
+Then open the UI:
+
+    http://<that-ip>/
+
+Hint: re-install with `--set host=<dns-name>` once you have DNS pointing at
+the controller's public IP.
+{{- end }}

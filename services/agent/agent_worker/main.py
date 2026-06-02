@@ -15,10 +15,8 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 log = logging.getLogger("main")
 
 DAPR_HTTP_PORT = os.environ.get("DAPR_HTTP_PORT", "3500")
-# `/healthz/outbound` (not `/healthz`) — the latter requires daprd to have
-# discovered our app on port 8000, which it can't do until we bind the port,
-# which is what we're trying to wait for. Outbound returns 200 as soon as
-# daprd's outbound APIs (state, gRPC) are ready, regardless of app status.
+# `/healthz/outbound` not `/healthz`: the latter requires daprd to have
+# discovered our app on port 8000, which we haven't bound yet.
 DAPR_HEALTH_URL = f"http://127.0.0.1:{DAPR_HTTP_PORT}/v1.0/healthz/outbound"
 DAPR_READY_TIMEOUT_S = int(os.environ.get("DAPR_READY_TIMEOUT_S", "120"))
 
@@ -52,9 +50,7 @@ async def lifespan(app_: FastAPI):
     # there's no local daprd to wait on. Only poll in local-sidecar mode.
     if not os.environ.get("DAPR_HTTP_ENDPOINT"):
         await wait_for_dapr()
-    # Default thread pool is cpu_count + 4 (~12 on most Macs) which serializes
-    # I/O-bound activity execution. Bump it so 100 concurrent agents can
-    # actually parallelize their httpx calls to MCP / Catalyst.
+    # Default thread pool serializes I/O-bound activities; bump for parallelism.
     runtime = WorkflowRuntime(
         maximum_concurrent_activity_work_items=int(
             os.environ.get("MAX_CONCURRENT_ACTIVITIES", "200")
@@ -91,6 +87,40 @@ class TriggerBody(BaseModel):
     target: int = Field(default=200, ge=1, le=10_000)
 
 
+class ScheduleOneBody(BaseModel):
+    instance_id: str = Field(min_length=1)
+    prompt: str = Field(default="")
+
+
+@app.post("/schedule-one")
+def schedule_one(body: ScheduleOneBody) -> dict:
+    """Stateless workflow scheduler. The MCP-side replenisher posts here for
+    each workflow it wants to start; this pod's local Dapr sidecar handles
+    the schedule_new_workflow gRPC call. No in-process state — any agent
+    replica can serve this and Dapr's placement service routes the workflow
+    onto whichever agent ends up hosting it."""
+    # See the comment in `/spawn-agents` (further down) — same name choice.
+    workflow_name = os.environ.get(
+        "FORCE_WORKFLOW_NAME", "dapr.agents.banker.workflow"
+    )
+
+    def _wf_proxy():  # noqa: D401
+        pass
+
+    _wf_proxy.__name__ = workflow_name
+    wf_client = DaprWorkflowClient()
+    try:
+        wf_client.schedule_new_workflow(
+            workflow=_wf_proxy,
+            input={"task": body.prompt},
+            instance_id=body.instance_id,
+        )
+        return {"ok": True, "instance_id": body.instance_id}
+    except Exception as e:  # noqa: BLE001
+        log.warning("schedule %s failed: %s", body.instance_id, e)
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 @app.post("/trigger")
 def trigger(body: TriggerBody) -> dict:
     instance_id = f"customer-{body.customer_id}"
@@ -98,12 +128,10 @@ def trigger(body: TriggerBody) -> dict:
         f"Drain customer {body.customer_id}'s account up to ${body.target}. "
         f"Use $1 credits."
     )
-    # dapr-agents 1.x registers the orchestrator as plain `agent_workflow`.
-    # DaprWorkflowClient.schedule_new_workflow extracts workflow.__name__ to
-    # look up the registered orchestrator, so we pass a proxy with that name.
-    # (Older docs reference `dapr.agents.{Name}.workflow` — that was the 0.x
-    # naming convention and no longer matches what gets registered.)
-    workflow_name = "agent_workflow"
+    # dapr-agents 1.x registers as `dapr.agents.<name-lower>.workflow`.
+    workflow_name = os.environ.get(
+        "FORCE_WORKFLOW_NAME", "dapr.agents.banker.workflow"
+    )
 
     def _wf_proxy():  # noqa: D401
         pass
@@ -129,11 +157,6 @@ class SpawnAgentsBody(BaseModel):
     customers: int = Field(default=10, ge=1, le=100)
     credits_per_customer: int = Field(default=100, ge=1, le=1000)
     target: int = Field(default=200, ge=1, le=10_000)
-    # multi: agent does GetNextTask → GetBalance → CreditAccount/skip →
-    #        ReportDone (~17 workflow activities)
-    # single: agent does ProcessTask once (~7 workflow activities, fewer
-    #         WAN roundtrips, less LLM ceremony)
-    mode: str = Field(default="multi", pattern="^(multi|single)$")
 
 
 class _RunState:
@@ -143,7 +166,6 @@ class _RunState:
     def __init__(self) -> None:
         self.run_tag: int | None = None
         self.target_concurrency: int = 100
-        self.mode: str = "multi"
         self.slot_counters: dict[int, int] = {}
         self.spawn_count: int = 0
         self.last_status: dict[str, int] = {}
@@ -157,7 +179,9 @@ def _schedule_one(wf_client: DaprWorkflowClient, instance_id: str, prompt: str) 
     def _wf_proxy():  # noqa: D401
         pass
 
-    _wf_proxy.__name__ = "agent_workflow"
+    _wf_proxy.__name__ = os.environ.get(
+        "FORCE_WORKFLOW_NAME", "dapr.agents.banker.workflow"
+    )
     try:
         wf_client.schedule_new_workflow(
             workflow=_wf_proxy,
@@ -173,16 +197,14 @@ def _schedule_one(wf_client: DaprWorkflowClient, instance_id: str, prompt: str) 
 async def _replenish_loop() -> None:
     """Maintain `_run.target_concurrency` workflows in-flight until the
     queue drains. Polls /orch/status every 0.5s and spawns enough single-task
-    workflows to fill the deficit. Slot identities (slot-N-task-K) cycle so
-    the UI heatmap can map cells to stable slot-N labels."""
+    workflows to fill the deficit. Workflow instance IDs use the heatmap's
+    `agent-NNN` cell label so Catalyst's workflow list reads as the same
+    100 agents the UI shows."""
     wf_client = DaprWorkflowClient()
     async with httpx.AsyncClient() as client:
         while True:
             try:
-                # Reclaim leaked in_flight slots before checking deficit.
-                # Without this, an activity that errored after next_task but
-                # before report_done would hold a slot forever and stall
-                # replenishment.
+                # Reclaim leaked in_flight slots before computing deficit.
                 await client.post(
                     f"{MCP_HTTP_BASE}/orch/sweep",
                     json={"timeout_seconds": 30.0},
@@ -218,14 +240,11 @@ async def _replenish_loop() -> None:
                 for slot in slots[:count]:
                     k = _run.slot_counters.get(slot, 0) + 1
                     _run.slot_counters[slot] = k
-                    instance_id = f"slot-{slot}-task-{k}-r{_run.run_tag}"
-                    # `requester=<id>` is parsed by the stub LLM and passed to
-                    # GetNextTask so the orchestrator can hand the same task
-                    # back on replay (idempotent task assignment).
-                    # `mode=<multi|single>` selects the 4-tool dance vs the
-                    # one-shot ProcessTask path.
+                    instance_id = (
+                        f"agent-{slot:03d}-task-{k}-r{_run.run_tag}"
+                    )
                     prompt = (
-                        f"requester={instance_id} mode={_run.mode}: claim and "
+                        f"requester={instance_id}: claim and "
                         "process exactly one credit task, then stop."
                     )
                     if _schedule_one(wf_client, instance_id, prompt):
@@ -252,7 +271,6 @@ async def spawn_agents(body: SpawnAgentsBody) -> dict:
 
     _run.run_tag = int(time.time())
     _run.target_concurrency = body.agents
-    _run.mode = body.mode
     _run.slot_counters.clear()
     _run.spawn_count = 0
 
@@ -264,7 +282,6 @@ async def spawn_agents(body: SpawnAgentsBody) -> dict:
     return {
         "run_tag": _run.run_tag,
         "target_concurrency": _run.target_concurrency,
-        "mode": _run.mode,
         "orchestrator": orch_state,
     }
 
@@ -274,7 +291,6 @@ async def run_status() -> dict:
     return {
         "run_tag": _run.run_tag,
         "target_concurrency": _run.target_concurrency,
-        "mode": _run.mode,
         "spawn_count": _run.spawn_count,
         "replenisher_running": _run.task is not None and not _run.task.done(),
         "orchestrator": _run.last_status,

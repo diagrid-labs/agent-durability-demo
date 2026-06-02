@@ -1,0 +1,58 @@
+{{- if .Values.rbac.enabled }}
+# Namespaced: list + delete pods matching the agent label selector. The
+# /chaos/pod-kill endpoint uses this.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "mcp.name" . }}-pod-killer
+  labels:
+    {{- include "mcp.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list", "get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "mcp.name" . }}-pod-killer
+  labels:
+    {{- include "mcp.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "mcp.name" . }}-pod-killer
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "mcp.name" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# Cluster-scoped: nodes are not namespaced, so the infrastructure view
+# (`/chaos/infra`) needs a ClusterRole. Read-only — list/get only, no
+# modifications. Bound only to the MCP service account in this namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "mcp.name" . }}-node-reader-{{ .Release.Namespace }}
+  labels:
+    {{- include "mcp.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["list", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "mcp.name" . }}-node-reader-{{ .Release.Namespace }}
+  labels:
+    {{- include "mcp.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "mcp.name" . }}-node-reader-{{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "mcp.name" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

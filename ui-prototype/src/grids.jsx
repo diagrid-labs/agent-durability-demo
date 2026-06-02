@@ -13,19 +13,20 @@ function AgentsGrid({ state }) {
     return m;
   }, [state.activity]);
 
-  const counts = uM2(() => {
-    let alive = 0, restarting = 0, dead = 0, idle = 0;
-    for (const a of agents) {
-      if (a.status === 'alive') alive++;
-      else if (a.status === 'restarting') restarting++;
-      else if (a.status === 'dead') dead++;
-      else if (a.status === 'idle') idle++;
-    }
-    return { alive, restarting, dead, idle };
-  }, [agents]);
+  // No memo — `state.agents` is mutated in place (the WS slot-state handler
+  // flips agent.status without replacing the array). Memoizing on the array
+  // reference would freeze the counts. The loop is 100 elements, trivial.
+  let alive = 0, restarting = 0, dead = 0, idle = 0;
+  for (const a of agents) {
+    if (a.status === 'alive') alive++;
+    else if (a.status === 'restarting') restarting++;
+    else if (a.status === 'dead') dead++;
+    else if (a.status === 'idle') idle++;
+  }
+  const counts = { alive, restarting, dead, idle };
 
   return (
-    <div className="card" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+    <div className="card" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
       <div className="card-h">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span className="label-md" style={{ color: 'var(--fg)' }}>Dapr Agents</span>
@@ -97,7 +98,7 @@ function CustomersGrid({ state }) {
   const totalGoal = customers.length * TARGET_BAL;
 
   return (
-    <div className="card" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+    <div className="card" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
       <div className="card-h">
         <span className="label-md" style={{ color: 'var(--fg)' }}>Customer accounts</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

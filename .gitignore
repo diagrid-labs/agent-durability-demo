@@ -24,6 +24,10 @@ venv/
 # Claude Code local settings (per-user permissions)
 .claude/settings.local.json
 
+# Local-only planning docs
+PLAN.md
+DECISIONS.md
+
 # Ephemeral demo output
 watch_*
 scratch/

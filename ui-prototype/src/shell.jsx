@@ -30,6 +30,13 @@ function fmtClock(ms) {
 
 /* ================ TopBar — Catalyst-docs style ================ */
 function TopBar({ state, feed, onTogglePause }) {
+  const run = state.run || {};
+  const agentPill = run.reachable
+    ? (run.active
+        ? { cls: 'green', dot: 'var(--green)', label: `run · ${run.spawnCount} spawned` }
+        : { cls: 'gray',  dot: 'var(--fg-3)', label: 'agent idle' })
+    : { cls: 'red', dot: 'var(--red)', label: 'agent offline' };
+
   return (
     <div className="topbar">
       <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
@@ -37,23 +44,36 @@ function TopBar({ state, feed, onTogglePause }) {
           <img src="assets/diagrid-logo.png" alt="Diagrid" style={{ height: 26, width: 'auto', display: 'block' }} />
           <span style={{ color: 'var(--line-strong)', fontSize: 18, fontWeight: 300 }}>/</span>
           <span style={{ fontSize: 14, color: 'var(--fg-1)', fontWeight: 500 }}>Bank Heist Demo</span>
+          {run.executionRunId != null && (
+            <span className="pill" style={{ fontSize: 11, padding: '2px 8px' }}
+                  title="Active execution run">
+              Run #{run.executionRunId}
+            </span>
+          )}
         </div>
         <nav style={{ display: 'flex', gap: 4 }}>
           <span className="topbar-link active">Dashboard</span>
-          <span className="topbar-link">Agents</span>
-          <span className="topbar-link">Workflows</span>
-          <span className="topbar-link">MCP</span>
-          <span className="topbar-link">Logs</span>
         </nav>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-        <span className="pill teal">
-          <span className="live-dot" /> live
+        {state.chaos && state.chaos.pods && state.chaos.pods.length > 0 && (
+          <span className="pill" title={state.chaos.pods.map(p => `${p.pod} · ${p.workflow_count} workflows`).join('\n')}>
+            <span className="dot" style={{ background: 'var(--accent)' }} />
+            fleet · {state.chaos.pods.length} {state.chaos.pods.length === 1 ? 'pod' : 'pods'}
+          </span>
+        )}
+        <span className={'pill ' + agentPill.cls} title={run.error || ''}>
+          <span className="dot" style={{ background: agentPill.dot }} />
+          {agentPill.label}
         </span>
         <span className="label" style={{ color: 'var(--fg-2)' }}>clock</span>
         <span className="mono" style={{ fontSize: 14, color: 'var(--fg)', fontWeight: 500 }}>
           {fmtClock(state.clock)}
         </span>
+        {run.active
+          ? <button className="btn sm" onClick={() => feed.control.stopRun()}>⏹ Stop run</button>
+          : <button className="btn sm primary" disabled={!run.reachable}
+              onClick={() => feed.control.startRun()}>▶ Start run</button>}
         <button className="btn sm ghost" onClick={onTogglePause}>
           {feed.control.isPaused() ? '▶ Resume' : '❚❚ Pause'}
         </button>

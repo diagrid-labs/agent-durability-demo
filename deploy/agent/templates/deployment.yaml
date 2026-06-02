@@ -30,6 +30,20 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- /* Bypass AKS hairpin NAT when Catalyst gateway is in the same cluster. */}}
+      {{- with (.Values.catalyst).hostAliases }}
+      hostAliases:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if (.Values.topologySpread).enabled }}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.topologySpread.maxSkew }}
+          topologyKey: {{ .Values.topologySpread.topologyKey | quote }}
+          whenUnsatisfiable: {{ .Values.topologySpread.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              {{- include "agent.selectorLabels" . | nindent 14 }}
+      {{- end }}
       containers:
         - name: agent
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -42,16 +56,47 @@ spec:
               value: {{ .Values.logLevel | quote }}
             - name: MCP_URL
               value: {{ .Values.mcp.url | quote }}
+            - name: MCP_HTTP_BASE
+              value: {{ .Values.mcp.httpBase | quote }}
+            - name: USE_DAPR_INVOKE
+              value: {{ .Values.mcp.useDaprInvoke | default false | quote }}
+            - name: DAPR_MCP_APP_ID
+              value: {{ .Values.mcp.daprAppId | default "bank-mcp-server" | quote }}
             - name: STUB_LLM
               value: {{ eq .Values.agent.llm.mode "stub" | ternary "true" "false" | quote }}
             - name: AGENT_MODEL
               value: {{ .Values.agent.llm.model | quote }}
+            - name: MAX_CONCURRENT_ACTIVITIES
+              value: {{ .Values.concurrency.maxActivities | quote }}
+            - name: MAX_CONCURRENT_ORCHESTRATIONS
+              value: {{ .Values.concurrency.maxOrchestrations | quote }}
+            - name: MAX_THREAD_POOL_WORKERS
+              value: {{ .Values.concurrency.threadPoolWorkers | quote }}
+            - name: AGENT_STATE_STORE
+              value: {{ .Values.stateStore.componentName | quote }}
             {{- if and (eq .Values.agent.llm.mode "real") .Values.agent.llm.apiKeySecret }}
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.agent.llm.apiKeySecret }}
                   key: OPENAI_API_KEY
+            {{- end }}
+            {{- /* `(.Values.catalyst).enabled` is nil-safe — won't blow up
+                  when `helm upgrade --reuse-values` carries forward an
+                  older release whose stored values predate the catalyst
+                  block. Equivalent to `.Values.catalyst.enabled` otherwise. */}}
+            {{- if (.Values.catalyst).enabled }}
+            # Catalyst Cloud mode: no sidecar, the Dapr SDK reads these to
+            # talk to the Catalyst project endpoints directly.
+            - name: DAPR_HTTP_ENDPOINT
+              value: {{ .Values.catalyst.httpEndpoint | quote }}
+            - name: DAPR_GRPC_ENDPOINT
+              value: {{ .Values.catalyst.grpcEndpoint | quote }}
+            - name: DAPR_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.catalyst.apiTokenSecret }}
+                  key: {{ .Values.catalyst.apiTokenSecretKey }}
             {{- end }}
           readinessProbe:
             httpGet:
