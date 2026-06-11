@@ -52,7 +52,9 @@ UI: `http://<host>/index.html` (or `localhost:9000` locally — same origin, no 
 
 ## Critical gotchas (read before debugging)
 
-**`DurableAgent` workflows cannot be terminated via the management API.** UI tooltip: "Workflow management APIs not supported on DurableAgent workflows." `diagrid workflow terminate/pause/purge` silently fail. Only cleanup path is wiping the `agent-workflow` state store (`diagrid component delete agent-workflow`) or recreating the app-id. See `TROUBLESHOOTING.md`.
+**`diagrid workflow terminate/pause/purge` are silently no-op for `DurableAgent` workflows — but the framework's own endpoints work.** The CLI hits Catalyst's management API which marks the workflow terminated in Catalyst's metadata but doesn't propagate the signal to the underlying durabletask runtime. The workflow runs to natural completion and the COMPLETED state overwrites the TERMINATED marker. Symptom: CLI returns `Status: success`, but `diagrid workflow get` later shows `status: completed` with a full natural execution history.
+
+The actual fix path is the dapr-agents framework endpoint at `/agent/instances/{instance_id}/terminate` (and `/purge`), added in [dapr/dapr-agents#438](https://github.com/dapr/dapr-agents/pull/438) and live in dapr-agents ≥ 1.0.0. It calls `DaprWorkflowClient.terminate_workflow()` over gRPC directly to the durabletask runtime, which actually stops the workflow at the next activity boundary. To enable in this demo we mount it via `AgentRunner._mount_service_routes()` in `services/agent/agent_worker/main.py`. For bulk cleanup of stuck instances, wipe the `agent-workflow` state store via the Catalyst Console UI or recreate the app-id.
 
 **Catalyst has a per-app-id RPS rate limit.** The replenisher bursts up to ~200 schedule calls/sec and running workflows do `GetState`/`PutState` on top. Manifestations: `RESOURCE_EXHAUSTED ... grpc_ratelimit middleware` (explicit) or `UNAVAILABLE: Socket closed` (LB drops). Throttled via `SCHEDULE_THROTTLE_MS` env on MCP (default 50ms ≈ 20 schedules/sec). Lower `target_concurrency` if you still see drops at scale.
 

@@ -6,6 +6,7 @@ import time
 
 import httpx
 from dapr.ext.workflow import DaprWorkflowClient, WorkflowRuntime
+from dapr_agents.workflow.runners.agent import AgentRunner
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
@@ -66,8 +67,22 @@ async def lifespan(app_: FastAPI):
     # agent.start(runtime, auto_register=True) registers workflows + activities
     # AND starts the runtime worker — do not call runtime.start() again.
     agent.start(runtime=runtime, auto_register=True)
+    # Mount the framework's terminate/purge HTTP routes (PR
+    # dapr/dapr-agents#438). We pick just the service routes — skipping the
+    # runner's subscribe()/HITL wiring, which would add pubsub traffic we
+    # don't use.
+    runner = AgentRunner()
+    runner._mount_service_routes(
+        fastapi_app=app_,
+        agent=agent,
+        entry_path="/agent/run",
+        status_path="/agent/instances/{instance_id}",
+        workflow_component="dapr",
+        fetch_status_payloads=True,
+    )
     app_.state.agent = agent
     app_.state.runtime = runtime
+    app_.state.agent_runner = runner
     log.info(
         "agent + runtime started (stub=%s)",
         os.environ.get("STUB_LLM", "true").lower() != "false",
