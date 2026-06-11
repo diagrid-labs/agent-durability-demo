@@ -20,12 +20,12 @@ service:
   # pointed at this Service. Demo-friendly default in `CATALYST_CLOUD.md`
   # uses LoadBalancer for one-step external access; production deploys with
   # multiple services usually want ClusterIP + a shared ingress.
-  type: ClusterIP
+  type: LoadBalancer
   # AKS-only: if set AND `type: LoadBalancer`, the chart annotates the
   # Service so AKS gives the public IP a `<label>.<region>.cloudapp.azure.com`
   # DNS name. Must be unique within the Azure region. Leave empty to use
   # the raw IP.
-  azureDnsLabel: ""
+  azureDnsLabel: "demo-prod-catalyst-agents"
 
 # Connection to the Postgres chart's Service.
 postgres:

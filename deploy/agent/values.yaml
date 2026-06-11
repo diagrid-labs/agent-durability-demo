@@ -38,8 +38,8 @@ mcp:
 # `componentName` stays meaningful in both modes: it's the env var
 # (`AGENT_STATE_STORE`) the agent uses to pick a state store by name.
 stateStore:
-  create: true
-  componentName: workflowstatestore
+  create: false
+  componentName: agent-memory
   postgresHost: postgres.bank-heist.svc.cluster.local
   postgresPort: 5432
   postgresDatabase: dapr_state

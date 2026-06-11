@@ -66,7 +66,7 @@ UI: `http://<host>/index.html` (or `localhost:9000` locally — same origin, no 
 
 **Pre-bank-agent-creditor workflows registered as `agent_workflow` are zombies.** Old runs under the previous app-id are stuck with a different workflow name than current workers register, so they won't be picked up. They live in the auto-provisioned `agent-workflow` state component, which is *managed* — `diagrid component delete` rejects with "managed diagrid components cannot be deleted directly." Cleanup paths: **(a)** wipe the state store directly via the **Catalyst Console UI** (Components → agent-workflow → clear/reset — works even when the CLI refuses), **(b)** delete + recreate the app-id, or **(c)** recreate the whole Catalyst project.
 
-**State-store component name is `agent-memory`** (auto-provisioned by Catalyst `--enable-agent-infrastructure`). Chart default `workflowstatestore` is stale — always `--set stateStore.componentName=agent-memory` on Helm upgrades.
+**State-store component name is `agent-memory`** (auto-provisioned by Catalyst `--enable-agent-infrastructure`). The agent chart now defaults to this (`stateStore.componentName: agent-memory`, `stateStore.create: false`). If you re-introduce a local-mode chart deploy, override back to `workflowstatestore` + `create: true`.
 
 **Catalyst remote mode = no daprd sidecar.** Don't grep for or expect a `daprd` container in agent pods. The Dapr SDK reads `DAPR_HTTP_ENDPOINT`/`DAPR_GRPC_ENDPOINT`/`DAPR_API_TOKEN` directly from env. Set `dapr.enabled=false` in Helm values; the chart conditionally injects those env vars when `catalyst.enabled=true`.
 
