@@ -29,8 +29,8 @@ function AgentsGrid({ state }) {
     <div className="card" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
       <div className="card-h">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span className="label-md" style={{ color: 'var(--fg)' }}>Dapr Agents</span>
-          <span className="pill gray">{agents.length} agents</span>
+          <span className="label-md" style={{ color: 'var(--fg)' }}>Agent Workflows</span>
+          <span className="pill gray">{agents.length} workflows</span>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
           {counts.idle > 0 && <Legend color="var(--fg-3)" label={`idle ${counts.idle}`} />}

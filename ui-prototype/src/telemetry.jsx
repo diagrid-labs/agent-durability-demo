@@ -87,8 +87,8 @@ function createTelemetry(initial) {
   function rebuildAgents() {
     state.agents = Array.from({ length: cfg.agentCount }, (_, i) => ({
       id: i,
-      label: `agent-${String(i+1).padStart(3,'0')}`,
-      status: 'alive',
+      label: `workflow-${String(i+1).padStart(3,'0')}`,
+      status: 'idle',
       restartingUntil: 0,
       txCount: 0,
       activatedAt: state.startedAt,
@@ -144,7 +144,7 @@ function createTelemetry(initial) {
         a.restartingUntil = t + 700 + Math.random() * 600;
         state.counters.restarts++;
       } else if (a.status === 'restarting' && a.restartingUntil && t >= a.restartingUntil) {
-        a.status = 'alive';
+        a.status = state.run.active ? 'alive' : 'idle';
         a.restartingUntil = 0;
       }
     }
@@ -172,6 +172,15 @@ function createTelemetry(initial) {
       state.run.reachable = false;
       state.run.active = false;
       state.run.error = err.message || String(err);
+    }
+
+    // Drive heatmap idle/alive from run lifecycle. Chaos states (dead /
+    // restarting) take priority — don't overwrite mid-recovery.
+    const desired = state.run.active ? 'alive' : 'idle';
+    for (const a of state.agents) {
+      if (a.status !== 'dead' && a.status !== 'restarting') {
+        a.status = desired;
+      }
     }
 
     try {
@@ -472,6 +481,10 @@ function createTelemetry(initial) {
       };
       try {
         const r = await postJSON('/agent/spawn', body);
+        // Start = fresh run. Wipe per-slot counters so the heatmap doesn't
+        // carry forward the previous run's numbers (user wouldn't expect a
+        // Start click to look like a continuation).
+        rebuildAgents();
         state.run.active = true;
         state.run.target = body.agents;
         state.run.error = null;
@@ -497,9 +510,9 @@ function createTelemetry(initial) {
     },
 
     // Real server chaos
-    async latencyJitter(ms = 10000) {
-      state.chaos.latencyUntil = nowMs() + ms;
-      try { await postJSON('/chaos/latency', { ms: 1500, duration_ms: ms }); } catch (_e) {}
+    async latencyJitter(durationMs = 10000) {
+      state.chaos.latencyUntil = nowMs() + durationMs;
+      try { await postJSON('/chaos/latency', { ms: 3000, duration_ms: durationMs }); } catch (_e) {}
       emit();
     },
     async dropTx() {

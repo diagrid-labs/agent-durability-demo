@@ -351,11 +351,16 @@ def build_app() -> FastAPI:
     @app.post("/chaos/drop")
     async def chaos_drop(body: DropBody) -> dict[str, Any]:
         chaos.arm_drop(body.count)
+        log_mcp("chaos", f"chaos armed: drop next {body.count} MCP call(s) with 5xx")
         return chaos.snapshot()
 
     @app.post("/chaos/latency")
     async def chaos_latency(body: LatencyBody) -> dict[str, Any]:
         chaos.arm_latency(body.ms, body.duration_ms)
+        log_mcp(
+            "chaos",
+            f"chaos armed: MCP latency +{body.ms}ms for {body.duration_ms}ms",
+        )
         return chaos.snapshot()
 
     @app.post("/chaos/reset")
@@ -645,6 +650,7 @@ def build_app() -> FastAPI:
     # caller, which Dapr workflow surfaces as a step failure → automatic retry.
     @app.exception_handler(DroppedCallError)
     async def _drop_handler(_, exc: DroppedCallError):  # type: ignore[no-untyped-def]
+        log_mcp("chaos", f"MCP call dropped: {exc} · workflow will retry")
         raise HTTPException(503, str(exc))
 
     # Serve the UI from / when ui-prototype/ is available. Override via UI_PROTOTYPE_DIR.

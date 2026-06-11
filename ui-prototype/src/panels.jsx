@@ -30,19 +30,28 @@ function McpServer({ state }) {
           <div style={{ color: 'var(--fg-3)', padding: 8 }}>Waiting for first query…</div>
         )}
         {lines.map(l => {
+          const isChaos = l.kind === 'chaos';
           const color = l.kind === 'req' ? 'var(--accent)' :
                         l.kind === 'res' ? 'var(--green)' :
+                        isChaos ? 'var(--red)' :
                         'var(--fg-3)';
-          const prefix = l.kind === 'req' ? '→' : l.kind === 'res' ? '←' : '·';
+          const prefix = l.kind === 'req' ? '→' : l.kind === 'res' ? '←' : isChaos ? '⚠' : '·';
           return (
             <div key={l.id} className="mcp-line" style={{
               display: 'grid', gridTemplateColumns: '52px 14px 1fr', gap: 8,
-              padding: '2px 0',
+              padding: '2px 6px',
+              margin: '0 -6px',
               alignItems: 'baseline',
+              background: isChaos ? 'var(--red-soft)' : undefined,
+              borderRadius: isChaos ? 4 : undefined,
             }}>
               <span style={{ color: 'var(--fg-3)', fontSize: 10 }}>{fmtClock(l.ts)}</span>
               <span style={{ color, fontWeight: 600 }}>{prefix}</span>
-              <span style={{ color: l.kind === 'sys' ? 'var(--fg-2)' : 'var(--fg-1)', wordBreak: 'break-word' }}>
+              <span style={{
+                color: isChaos ? 'var(--red)' : l.kind === 'sys' ? 'var(--fg-2)' : 'var(--fg-1)',
+                wordBreak: 'break-word',
+                fontWeight: isChaos ? 500 : 'inherit',
+              }}>
                 {l.text}
               </span>
             </div>
@@ -85,19 +94,19 @@ function ChaosPanel({ feed, state }) {
                   title="Pod dies mid-work (OOM, eviction, crash). Catalyst re-dispatches to a healthy worker."
                   disabled={!state.chaos.victim}>
             {state.chaos.victim
-              ? `Pod failure (~${state.chaos.victim.workflow_count} agents)`
+              ? `Pod failure (~${state.chaos.victim.workflow_count} workflows)`
               : 'Pod failure'}
           </button>
           <button className="btn sm" onClick={() => feed.control.killAZ()}
                   title="All pods in one Availability Zone die. Surviving AZs absorb the load."
                   disabled={!state.chaos.zoneVictim}>
             {state.chaos.zoneVictim
-              ? `AZ failure: ${state.chaos.zoneVictim.zone} (~${state.chaos.zoneVictim.workflow_count} agents)`
+              ? `AZ failure: ${state.chaos.zoneVictim.zone} (~${state.chaos.zoneVictim.workflow_count} workflows)`
               : 'AZ failure'}
           </button>
           <button className="btn sm" onClick={() => feed.control.latencyJitter(10000)}
                   title="Slow downstream (connection pool timeout, slow query). Workflows complete, just slower.">
-            MCP Server Latency · 10s
+            MCP Slowdown · 10s window
           </button>
           <button className="btn sm" onClick={() => feed.control.dropTx()}
                   title="Next MCP call returns 5xx. Workflow retries; idempotency prevents double-credit.">
@@ -132,7 +141,7 @@ function PodFleet({ state }) {
         </div>
         {victim && (
           <span className="pill amber" title={`next Kill 1 pod will target ${victim.pod}`}>
-            next: {victim.workflow_count} agents
+            next: {victim.workflow_count} workflows
           </span>
         )}
       </div>
