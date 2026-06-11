@@ -104,10 +104,6 @@ function ChaosPanel({ feed, state }) {
             Force MCP Call Error
           </button>
         </div>
-        <div className="chaos-strip">
-          <span className="dot amber" />
-          <span>Recovery proof: <b>tx lost = 0</b>, every customer reaches <b>{fmtMoney(TARGET_BAL)}</b>.</span>
-        </div>
       </div>
     </div>
   );

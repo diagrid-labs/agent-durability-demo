@@ -153,12 +153,6 @@ html, body {
   background: var(--surface);
   position: relative; z-index: 5;
 }
-.topbar-link {
-  color: var(--fg-1); font-size: 14px; font-weight: 500;
-  padding: 6px 10px; border-radius: 4px; cursor: default;
-}
-.topbar-link.active { color: var(--accent); }
-
 /* Scrollbars */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -214,17 +208,6 @@ html, body {
   padding: 1px 5px; border-radius: 3px;
   background: var(--accent-soft); color: var(--accent);
   border: 1px solid #b9dee5;
-}
-
-/* Chaos warning strip */
-.chaos-strip {
-  background: var(--amber-soft);
-  border: 1px solid #f3deb3;
-  color: var(--amber);
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-size: 12px;
-  display: flex; align-items: center; gap: 8px;
 }
 
 /* AZ chaos pulse — applied to nodepool/node entries in a recently-killed zone */

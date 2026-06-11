@@ -31,11 +31,6 @@ function fmtClock(ms) {
 /* ================ TopBar — Catalyst-docs style ================ */
 function TopBar({ state, feed, onTogglePause }) {
   const run = state.run || {};
-  const agentPill = run.reachable
-    ? (run.active
-        ? { cls: 'green', dot: 'var(--green)', label: `run · ${run.spawnCount} spawned` }
-        : { cls: 'gray',  dot: 'var(--fg-3)', label: 'agent idle' })
-    : { cls: 'red', dot: 'var(--red)', label: 'agent offline' };
 
   return (
     <div className="topbar">
@@ -51,21 +46,8 @@ function TopBar({ state, feed, onTogglePause }) {
             </span>
           )}
         </div>
-        <nav style={{ display: 'flex', gap: 4 }}>
-          <span className="topbar-link active">Dashboard</span>
-        </nav>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-        {state.chaos && state.chaos.pods && state.chaos.pods.length > 0 && (
-          <span className="pill" title={state.chaos.pods.map(p => `${p.pod} · ${p.workflow_count} workflows`).join('\n')}>
-            <span className="dot" style={{ background: 'var(--accent)' }} />
-            fleet · {state.chaos.pods.length} {state.chaos.pods.length === 1 ? 'pod' : 'pods'}
-          </span>
-        )}
-        <span className={'pill ' + agentPill.cls} title={run.error || ''}>
-          <span className="dot" style={{ background: agentPill.dot }} />
-          {agentPill.label}
-        </span>
         <span className="label" style={{ color: 'var(--fg-2)' }}>clock</span>
         <span className="mono" style={{ fontSize: 14, color: 'var(--fg)', fontWeight: 500 }}>
           {fmtClock(state.clock)}
