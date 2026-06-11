@@ -2,7 +2,7 @@
 
 Run the dapr-agents Bank Heist demo on your laptop with the agent's Dapr APIs proxied through **Diagrid Catalyst**. Workflow runtime, state store, and placement run in Catalyst; the agent process, MCP server, and bank Postgres run locally.
 
-> For a k8s deploy that uses Catalyst Cloud (no local `diagrid dev run`), see [CATALYST_CLOUD.md](./CATALYST_CLOUD.md).
+> For a k8s deploy that uses Catalyst Self-Hosted (no local `diagrid dev run`), see [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md).
 > For the same k8s deploy with upstream Dapr instead of Catalyst, see the [main README](./README.md#deploying-to-kubernetes).
 
 ## Architecture
@@ -106,7 +106,7 @@ Local Catalyst historically requires the short alias `agent_workflow` for the sc
 export FORCE_WORKFLOW_NAME=agent_workflow
 ```
 
-If you forget this, scheduled workflows will fail with `OrchestratorNotRegisteredError`. See [NOTES_FOR_DAPR_AGENTS.md](./NOTES_FOR_DAPR_AGENTS.md) for the engineering follow-up on this discrepancy.
+If you forget this, scheduled workflows will fail with `OrchestratorNotRegisteredError`.
 
 This will:
 1. Authenticate against your `bank-heist` project.

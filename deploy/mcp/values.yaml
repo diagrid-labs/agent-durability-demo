@@ -17,7 +17,7 @@ service:
   # ClusterIP keeps the service internal — pair it with an ingress (or use
   # `kubectl port-forward`) for external access. LoadBalancer asks the cloud
   # provider (AKS, EKS, GKE) to provision a public IP and a managed L4 LB
-  # pointed at this Service. Demo-friendly default in `CATALYST_CLOUD.md`
+  # pointed at this Service. Demo-friendly default in `CATALYST_SELF_HOSTED.md`
   # uses LoadBalancer for one-step external access; production deploys with
   # multiple services usually want ClusterIP + a shared ingress.
   type: LoadBalancer

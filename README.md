@@ -30,9 +30,8 @@ Dapr Agents durability demo. 100 agents credit 10 customer accounts from $100 �
 
 Pick a deployment path:
 
-- [**Deploying to Kubernetes**](#deploying-to-kubernetes) — production-shaped, vendor-neutral. Cluster-flavor specifics live in their own docs:
-  - [AKS.md](./AKS.md) — Azure cluster provisioning
-  - [CATALYST_CLOUD.md](./CATALYST_CLOUD.md) — Diagrid Catalyst Cloud instead of upstream Dapr (no sidecar; SDK talks to managed endpoints)
+- [**Deploying to Kubernetes**](#deploying-to-kubernetes) — production-shaped, vendor-neutral. Bring your own cluster (AKS, EKS, GKE, kind, k3s).
+  - [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md) — Diagrid Catalyst Self-Hosted in the same cluster (no daprd sidecar; SDK talks to in-cluster gateway)
 - [**Local deployment with Dapr**](#local-deployment-with-dapr) — docker compose for Postgres + MCP, agent runs locally with a self-hosted `dapr run` sidecar.
 - [**Local deployment with Catalyst**](#local-deployment-with-catalyst) — docker compose for Postgres + MCP, agent runs locally with Diagrid Catalyst providing managed Dapr APIs.
 
@@ -40,10 +39,7 @@ Pick a deployment path:
 
 ## Deploying to Kubernetes
 
-These instructions are vendor-neutral. The charts work on any conformant cluster — AKS, EKS, GKE, k3s, kind, etc. For cluster-provisioning specifics see:
-
-- **AKS**: [AKS.md](./AKS.md)
-- Other clusters: provision yourself, then come back here at step 2.
+These instructions are vendor-neutral. The charts work on any conformant cluster — AKS, EKS, GKE, k3s, kind, etc. Provision the cluster with whichever tool you prefer, then come back here at step 2.
 
 ### 0. Cluster prerequisites
 
@@ -100,12 +96,11 @@ dapr status -k                   # all components Healthy
 
 The MCP server is the only externally-reachable component (it hosts the UI plus all APIs). Three options, in order of simplicity:
 
-**a. Direct LoadBalancer (simplest, recommended for the demo).** Cloud-managed L4 LB with a public IP, one Service:
+**a. Direct LoadBalancer (chart default, recommended for the demo).** The MCP chart defaults to `service.type=LoadBalancer` and `service.azureDnsLabel=demo-prod-catalyst-agents`. Override the label for your environment (must be unique within the Azure region):
 
 ```bash
-# Pass these at install time in step 5, or `helm upgrade --reuse-values` later:
-#   --set service.type=LoadBalancer
-#   --set service.azureDnsLabel=<unique-label>   # AKS only; gives you a DNS name
+# In step 5, or `helm upgrade --reuse-values` later:
+#   --set service.azureDnsLabel=<unique-label>
 ```
 
 **b. `kubectl port-forward` for local-only access.** No LB, no DNS:
@@ -128,8 +123,7 @@ kubectl -n $NS rollout status statefulset/postgres
 
 helm install mcp deploy/mcp -n $NS \
   --set image.repository=$REGISTRY/bank-heist-mcp \
-  --set service.type=LoadBalancer
-  # AKS extra (optional): --set service.azureDnsLabel=<unique-label>
+  --set service.azureDnsLabel=<unique-label>   # required on AKS to avoid colliding with the demo's default label
 
 helm install agent deploy/agent -n $NS \
   --set image.repository=$REGISTRY/bank-heist-agent
@@ -188,7 +182,7 @@ helm uninstall ingress -n $NS 2>/dev/null   # only if you installed the ingress 
 kubectl delete namespace $NS
 ```
 
-(Cluster-level tear-down is provider-specific — see your provider's doc, or [AKS.md](./AKS.md) if you used AKS.)
+(Cluster-level tear-down is provider-specific — see your provider's doc.)
 
 ---
 
@@ -273,7 +267,7 @@ Full instructions live in [**CATALYST.md**](./CATALYST.md). Quick outline:
 4. `cd services/agent && uv sync`.
 5. `diagrid dev run --file dapr.yaml --project <your-project> --skip-managed-kv --skip-managed-pubsub --skip-default-resiliency`.
 
-Set `FORCE_WORKFLOW_NAME=agent_workflow` in the agent's env before step 5 — this runtime requires the short workflow alias rather than the fully-qualified name used elsewhere. See [CATALYST.md](./CATALYST.md) for the full walkthrough and [NOTES_FOR_DAPR_AGENTS.md](./NOTES_FOR_DAPR_AGENTS.md) for the engineering follow-up on this discrepancy.
+Set `FORCE_WORKFLOW_NAME=agent_workflow` in the agent's env before step 5 — this runtime requires the short workflow alias rather than the fully-qualified name used elsewhere. See [CATALYST.md](./CATALYST.md) for the full walkthrough.
 
 ---
 
@@ -306,9 +300,7 @@ Set `FORCE_WORKFLOW_NAME=agent_workflow` in the agent's env before step 5 — th
 ├── services/
 │   ├── mcp/                   # FastAPI + mcp SDK + asyncpg + orchestrator + replenisher + WS
 │   └── agent/                 # dapr-agents DurableAgent + stub LLM
-├── AKS.md                     # Azure-specific cluster provisioning
 ├── CATALYST.md                # Catalyst local bring-up (`diagrid dev run`)
-├── CATALYST_CLOUD.md          # Catalyst Cloud on k8s
-├── TROUBLESHOOTING.md         # Common failures across all deploy paths
-└── NOTES_FOR_DAPR_AGENTS.md   # Workflow-name compat note for the dapr-agents team
+├── CATALYST_SELF_HOSTED.md    # Catalyst Self-Hosted in your cluster
+└── TROUBLESHOOTING.md         # Common failures across all deploy paths
 ```

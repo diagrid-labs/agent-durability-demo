@@ -8,7 +8,7 @@ Diagrid sales demo: 100 Dapr durable workflows credit 10 customer accounts $100 
 ui-prototype/                 React UI, Babel-in-browser (no build pipeline)
   index.html                  entry — also served from MCP at /
   src/telemetry.jsx           createTelemetry — polls MCP, projects into UI state
-  src/shell.jsx               TopBar, Counters, mode toggle (see SHOW_MODE_TOGGLE)
+  src/shell.jsx               TopBar, Counters
   src/grids.jsx               AgentsGrid, CustomersGrid
   src/panels.jsx              McpServer, ChaosPanel, PodFleet, Sidebar
   tweaks-panel.jsx            dev tweaks panel
@@ -46,7 +46,7 @@ UI Start ─POST→ MCP /agent/spawn ─→ Replenisher.start
 
 ## Bring-up (canonical)
 
-Production (AKS + Catalyst remote): Helm charts in `deploy/`, see `CATALYST_CLOUD.md` + `AKS.md`.
+Production (any K8s + Catalyst Self-Hosted): Helm charts in `deploy/`, see `CATALYST_SELF_HOSTED.md`.
 Local: `docker compose -f local/compose.yaml up -d --build` + `diagrid dev run --file dapr.yaml --project <p>` per `CATALYST.md`.
 UI: `http://<host>/index.html` (or `localhost:9000` locally — same origin, no CORS).
 
@@ -84,8 +84,6 @@ Saved in `deploy/catalyst-selfhosted/port-override.yaml`. Apply with `diagrid re
 
 **AKS hairpin NAT blocks pod → own-cluster-LB traffic.** When Catalyst Self-Hosted runs in the same cluster as the apps, pods can't reach the Catalyst gateway via its public LoadBalancer IP (TCP connect times out). Workaround: agent chart's `catalyst.hostAliases` (in `values.yaml`) maps the public Catalyst hostnames to the gateway-envoy ClusterIP so connections stay in-cluster. The chart writes this to `spec.template.spec.hostAliases` in the agent Deployment — survives `helm upgrade`. Without this, agent workflow runtime gets `Connection timed out` retrying the LB external IP forever.
 
-**UI mode is hardcoded `single` and the toggle is hidden.** `ui-prototype/src/shell.jsx:35`: `const SHOW_MODE_TOGGLE = false;` and `useState('single')`. To switch to `multi`, flip the constant or change the default — there's no runtime switch in the UI today.
-
 **`AGENT_HTTP_BASE` env var on the MCP server** determines where the replenisher POSTs `/schedule-one`. In k8s set to `http://agent.<ns>.svc.cluster.local:8000`; locally `http://host.docker.internal:8000`. The default baked into the code is the local one — k8s deployments **must** override via Helm.
 
 **Demo is single-source-of-truth in Postgres.** Customer balance correctness comes from `accounts.balance`. `transactions.tx_id` has UNIQUE constraint with `ON CONFLICT DO NOTHING` — that's the idempotency gate. Don't TRUNCATE between runs unless you also reset balances to 100.
@@ -98,8 +96,8 @@ Saved in `deploy/catalyst-selfhosted/port-override.yaml`. Apply with `diagrid re
 | Per-agent / per-pod state in UI | `state.run`, `state.chaos.pods` in `ui-prototype/src/telemetry.jsx` |
 | MCP tool definitions | `@mcp.tool()` decorators in `services/mcp/mcp_server/server.py` |
 | Real pod-chaos endpoints | `/chaos/pods`, `/chaos/pod-kill`, `/chaos/az-kill` → `pod_chaos.py` |
-| Catalyst bring-up + provisioning | `CATALYST_CLOUD.md`, `CATALYST.md` |
-| AKS topology (3 nodepools, zone spread) | `AKS.md`, `deploy/agent/values.yaml:topologySpread` |
+| Catalyst bring-up + provisioning | `CATALYST_SELF_HOSTED.md`, `CATALYST.md` |
+| Node topology (labels, zone spread) | `deploy/agent/values.yaml:topologySpread` |
 | Common operational failures + fixes | `TROUBLESHOOTING.md` |
 
 ## Code style for this repo

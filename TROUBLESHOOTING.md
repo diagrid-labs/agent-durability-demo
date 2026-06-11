@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Common failures hit while bringing the Bank Heist demo up across the four deploy paths (AKS + upstream Dapr, AKS + Catalyst Cloud, local + Dapr, local + Catalyst). Most are environmental rather than code bugs.
+Common failures hit while bringing the Bank Heist demo up across the deploy paths (AKS + Catalyst Self-Hosted, local + Dapr, local + Catalyst). Most are environmental rather than code bugs.
 
 ## UI loads but customer balances never move
 
@@ -20,10 +20,10 @@ Common causes below.
 
 The workflow engine dispatched a work item to the Python worker, but the name in the dispatch doesn't match anything in the worker's local registry.
 
-The dapr-agents SDK registers the orchestrator under `dapr.agents.{ProfileName}.workflow` (title-cased, e.g. `dapr.agents.Banker.workflow`). Confirm the registered name from the agent's startup log:
+dapr-agents 1.x registers the orchestrator under `dapr.agents.<name-lower>.workflow` (lowercase, e.g. `dapr.agents.banker.workflow`). Confirm the registered name from the agent's startup log:
 
 ```
-WorkflowRuntime INFO: Registering workflow 'dapr.agents.Banker.workflow' with runtime
+WorkflowRuntime INFO: Registering workflow 'dapr.agents.banker.workflow' with runtime
 ```
 
 Schedule with that exact name. The code in `services/agent/agent_worker/main.py` does this by default. If something downstream has overridden it (e.g. `FORCE_WORKFLOW_NAME` env var), reset:
@@ -33,41 +33,40 @@ kubectl -n bank-heist set env deployment/agent FORCE_WORKFLOW_NAME-
 kubectl -n bank-heist rollout restart deployment/agent
 ```
 
-If running locally under `diagrid dev run` and the fully-qualified name fails there, set `FORCE_WORKFLOW_NAME=agent_workflow` — local Catalyst's daprd has historically accepted only the short alias. (See [NOTES_FOR_DAPR_AGENTS.md](./NOTES_FOR_DAPR_AGENTS.md) for the engineering follow-up.)
+If running locally under `diagrid dev run` and the fully-qualified name fails there, set `FORCE_WORKFLOW_NAME=agent_workflow` — local Catalyst's daprd has historically accepted only the short alias.
 
-## `failed to create orchestration instance: the state store is not found`
+## `failed to create orchestration instance: the state store is not found` / `state store ... is not found`
 
-The Dapr workflow engine needs a state store named whatever `AGENT_STATE_STORE` says (default `workflowstatestore`). Three flavors of breakage:
+The workflow runtime needs a state store named whatever `AGENT_STATE_STORE` says. The chart's defaults are tuned for Catalyst Self-Hosted (`stateStore.componentName: agent-memory`, `stateStore.create: false`).
 
-**Upstream Dapr** — the `Component` CRD wasn't applied. Verify:
+**Catalyst (Self-Hosted or Local)** — the named component doesn't exist in the project. `agent-memory` is auto-provisioned by `--enable-agent-infrastructure` at project-create time and is the chart default. If it's missing, the project wasn't created with that flag; recreate the project:
 
 ```bash
-kubectl -n bank-heist get components.dapr.io
+diagrid project delete <name> --wait
+diagrid project create <name> --region <region> \
+  --enable-managed-workflow --enable-agent-infrastructure --use --wait
 ```
 
-If it's empty:
-
-- Are the Dapr CRDs even installed? `kubectl get crd | grep dapr.io`. If not, `dapr init -k --wait`.
-- Did the agent chart skip rendering the component? `helm get values agent -n bank-heist` — if `stateStore.create: false` is there from a prior Catalyst experiment, re-enable:
-  ```bash
-  helm upgrade agent deploy/agent -n bank-heist --reuse-values \
-    --set stateStore.create=true
-  ```
-
-**Catalyst** — the component name on the chart side doesn't match what's in the Catalyst project. List what's there:
+If you've explicitly overridden `stateStore.componentName` to something else (e.g. `workflowstatestore` for an upstream-Dapr deploy), confirm what's in the live project:
 
 ```bash
 diagrid component list --project <your-project>
 ```
 
-Then set the chart to use one of those names:
+**Upstream Dapr (no Catalyst)** — flip the chart back to creating its own Postgres-backed component:
 
 ```bash
 helm upgrade agent deploy/agent -n bank-heist --reuse-values \
-  --set stateStore.componentName=agent-memory
+  --set stateStore.create=true \
+  --set stateStore.componentName=workflowstatestore
 ```
 
-`agent-memory` is auto-provisioned by `--enable-agent-infrastructure` and is the simplest default to use.
+Confirm the Component CRD exists:
+
+```bash
+kubectl get crd | grep dapr.io          # CRDs installed? if not, dapr init -k --wait
+kubectl -n bank-heist get components.dapr.io
+```
 
 ## Public LB IP exists but external traffic times out
 
@@ -114,7 +113,7 @@ conflict with "kubectl-patch" using v1: .spec.type
 Another field manager (usually `kubectl` from a previous `kubectl patch` or `kubectl scale`) owns the field Helm wants to set. Options:
 
 - `helm upgrade ... --server-side=false` — fall back to client-side apply, which doesn't care about field ownership.
-- Or align the chart values with the live state so there's no conflict (e.g. pass `--set service.type=LoadBalancer` and `--set replicaCount=$(kubectl get deploy ... -o jsonpath='{.spec.replicas}')`).
+- Or align the chart values with the live state so there's no conflict (e.g. pass `--set replicaCount=$(kubectl get deploy ... -o jsonpath='{.spec.replicas}')`).
 
 ## `Error: UPGRADE FAILED: nil pointer evaluating interface {}.<field>`
 
@@ -153,11 +152,11 @@ kubectl -n bank-heist patch deployment mcp -p \
 kubectl -n bank-heist rollout restart deployment/mcp
 ```
 
-## Catalyst Cloud throughput much lower than upstream Dapr
+## Throughput notes by deploy mode
 
-Expected. With Catalyst Cloud, every workflow activity round-trips to Diagrid's hosted control plane. Upstream Dapr's sidecar handles activities in-pod. Each `process_task` chain has ~4 activities; that's ~4 WAN hops per credit in Cloud, vs. ~4 intra-pod calls in upstream.
-
-For high throughput in the demo, run upstream Dapr or Catalyst Self-Hosted (data plane in your cluster). For Catalyst Cloud, lower `target_concurrency` in the UI tweaks panel to 30-50 — counter-intuitively, less queue depth at the managed state store often gives better total throughput.
+- **Catalyst Self-Hosted** (data plane in your cluster): no per-app RPS limit, intra-cluster latency. The default `target_concurrency` of 100 works fine.
+- **Local Dapr** (sidecar in-pod): fastest path; activities never leave the pod.
+- **Local Catalyst** (`diagrid dev run`): all traffic tunnels through the dev proxy; expect slower throughput than Self-Hosted but the durability story is identical.
 
 The durability story (the actual point of the demo) works at any throughput.
 
@@ -172,18 +171,10 @@ kubectl -n bank-heist exec deploy/agent -c agent -- printenv | grep FORCE_WORKFL
 # Should print nothing.
 ```
 
-## Workflows complete with status `FAILED` but DB shows the transaction committed
-
-Pre-fix bug, now resolved in `services/mcp/mcp_server/server.py`. When a workflow's `process_task` activity caught an exception (e.g. chaos drop, DB hiccup), the `finally` block always called `orch.report_done(applied=False)` — which permanently consumed the task even though the credit hadn't been applied. Customer ended up at $199 instead of $200, with no retry possible.
-
-Fix: on exception, call `orch.release_for_retry(tx_id)` instead of `report_done`. The task goes back to the front of the queue for a fresh attempt; idempotency at the DB absorbs any straggling duplicates.
-
-If you see customers stuck at $199 with the demo otherwise complete, you're running an old MCP image.
-
 ## Workflows show in Catalyst console but are scheduled with the wrong name
 
 If Catalyst's workflow list shows entries named `agent_workflow` but they fail with `OrchestratorNotRegisteredError`, the agent code is using the wrong schedule name for that environment.
 
-The demo unifies on `dapr.agents.Banker.workflow` (matches what the SDK registers). The `FORCE_WORKFLOW_NAME` env var is the per-deployment override if a runtime needs the short alias (currently only Catalyst Local under `diagrid dev run` has historically required it).
+The demo unifies on `dapr.agents.banker.workflow` (lowercase, matches what dapr-agents 1.x registers). The `FORCE_WORKFLOW_NAME` env var is the per-deployment override if a runtime needs the short alias (currently only Catalyst Local under `diagrid dev run` has historically required it).
 
 If `FORCE_WORKFLOW_NAME` is unset and you're still seeing `agent_workflow` in the console, the running pod is on a stale image — rebuild and force-pull.
