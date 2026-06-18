@@ -94,18 +94,53 @@ class Replenisher:
                     snap = await self._orch.status()
                     # Sweep stale in-flight tasks back to the queue. With the
                     # replenisher local to MCP, we can call directly.
-                    sweep = await self._orch.sweep(timeout_seconds=30.0)
+                    # 60s window lets Catalyst's native activity-level
+                    # recovery succeed for most chaos cases before our
+                    # orchestrator-supervised restart-in-place kicks in.
+                    # The trade-off is slightly slower recovery for
+                    # workflows that ARE genuinely stuck, but log volume
+                    # and Catalyst gateway load both drop noticeably.
+                    sweep = await self._orch.sweep(timeout_seconds=60.0)
                     snap["released_total"] = sweep["released_total"]
                 except Exception as e:  # noqa: BLE001
                     log.warning("orch status read failed: %s", e)
                     await asyncio.sleep(2.0)
                     continue
 
+                # Restart-in-place for orphans: terminate + purge the stuck
+                # workflow, then re-schedule with the SAME instance_id so the
+                # audit trail shows one continuous workflow. If any step
+                # fails, the orphan stays released-only; the regular
+                # replenisher loop below will spawn-new under a fresh id as
+                # a safety net.
+                for orphan_id in sweep.get("orphans", []):
+                    if await self._restart_in_place(client, orphan_id):
+                        self._spawn_count += 1
+
                 self._last_snap = snap
                 queue_remaining = int(snap.get("queue_remaining", 0))
                 in_flight = int(snap.get("in_flight", 0))
 
                 if queue_remaining == 0 and in_flight == 0:
+                    # Reconcile orchestrator's `reported` set against the
+                    # DB before declaring done. Catches ghost tx_ids that
+                    # the orchestrator counted as applied but that never
+                    # landed in the transactions table (rare race when an
+                    # activity timed out or a connection dropped mid-credit
+                    # under heavy chaos). Ghosts get re-queued and the loop
+                    # picks them up on the next tick.
+                    try:
+                        recon = await self._orch.reconcile()
+                        if recon.get("ghosts", 0) > 0:
+                            log.warning(
+                                "reconciliation found %d ghost tx_id(s); requeued %d",
+                                recon.get("ghosts"),
+                                recon.get("requeued"),
+                            )
+                            await asyncio.sleep(0.2)
+                            continue
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("reconciliation failed: %s", e)
                     log.info(
                         "replenisher done: applied=%s skipped=%s spawn_count=%s",
                         snap.get("applied_total"),
@@ -134,20 +169,73 @@ class Replenisher:
 
                 await asyncio.sleep(0.5)
 
-    async def _schedule_one(
+    async def _restart_in_place(
         self, client: httpx.AsyncClient, instance_id: str
     ) -> bool:
+        """Terminate + purge + re-schedule the same instance_id.
+
+        On any failure, returns False — the regular replenisher loop will
+        spawn-new under a fresh id as a fallback. Three sequential calls so
+        all-or-nothing isn't quite achievable; we accept that a partial
+        failure may leave a terminated-but-not-purged workflow in Catalyst.
+        Idempotent retries on next sweep will eventually clean it up."""
+        try:
+            r = await client.post(
+                f"{self._agent_base}/agent/instances/{instance_id}/terminate",
+                timeout=5.0,
+            )
+            if r.status_code >= 400:
+                log.warning(
+                    "terminate %s returned %s: %s",
+                    instance_id, r.status_code, r.text[:200],
+                )
+                return False
+            r = await client.post(
+                f"{self._agent_base}/agent/instances/{instance_id}/purge",
+                timeout=5.0,
+            )
+            if r.status_code >= 400:
+                log.warning(
+                    "purge %s returned %s: %s",
+                    instance_id, r.status_code, r.text[:200],
+                )
+                return False
+            # Catalyst's purge is "fire and forget" — the 200 OK returns
+            # before the workflow id is actually reusable in its state layer.
+            # Empirically the propagation takes 500-1000ms (variable); a 1s
+            # wait skips the noisiest case. Remaining retries handle outliers
+            # quietly so the only log line is the final success.
+            await asyncio.sleep(1.0)
+            for delay_ms in (500, 1000, 2000):
+                ok = await self._schedule_one(client, instance_id, quiet=True)
+                if ok:
+                    log.info("restart-in-place succeeded: %s", instance_id)
+                    return True
+                await asyncio.sleep(delay_ms / 1000.0)
+            log.info("restart-in-place exhausted retries, falling back: %s", instance_id)
+            return False
+        except Exception as e:  # noqa: BLE001
+            log.warning("restart-in-place failed for %s: %s", instance_id, e)
+            return False
+
+    async def _schedule_one(
+        self, client: httpx.AsyncClient, instance_id: str, *, quiet: bool = False,
+    ) -> bool:
+        """Schedule a workflow on the agent. `quiet` demotes the failure log
+        to DEBUG — used by restart-in-place where Catalyst's first-attempt
+        502 is expected and absorbed by the retry loop."""
         prompt = (
             f"requester={instance_id}: claim and process "
             "exactly one credit task, then stop."
         )
+        on_fail = log.debug if quiet else log.warning
         try:
             r = await client.post(
                 f"{self._agent_base}/schedule-one",
                 json={"instance_id": instance_id, "prompt": prompt},
             )
             if r.status_code >= 400:
-                log.warning(
+                on_fail(
                     "schedule %s returned %s: %s",
                     instance_id,
                     r.status_code,
@@ -157,5 +245,5 @@ class Replenisher:
             data = r.json()
             return bool(data.get("ok", True))
         except Exception as e:  # noqa: BLE001
-            log.warning("schedule %s failed: %s", instance_id, e)
+            on_fail("schedule %s failed: %s", instance_id, e)
             return False

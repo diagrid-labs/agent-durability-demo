@@ -10,12 +10,24 @@ runs, idempotency is enforced by the composite PK (execution_run_id, tx_id).
 """
 
 import asyncio
+import re
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .db import Database
+
+
+_TX_ID_RE = re.compile(r"^tx-c(\d+)-(\d+)$")
+
+
+def _parse_tx_id(tx_id: str) -> tuple[int, int] | None:
+    """Parse `tx-c{customer_id}-{n}` → (customer_id, n)."""
+    m = _TX_ID_RE.match(tx_id)
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2))
 
 
 @dataclass
@@ -151,15 +163,20 @@ class Orchestrator:
 
     async def report_done(self, tx_id: str, applied: bool) -> dict[str, Any]:
         """Mark `tx_id` complete. Idempotent: a duplicate ReportDone (e.g.
-        from a workflow replay) updates no counters."""
+        from a workflow replay) updates no counters but still cleans up
+        in_flight / by_requester. Without that cleanup, a sweep that
+        releases the task between the first ReportDone landing and a
+        re-dispense to a new workflow leaves the second workflow's
+        duplicate ReportDone unable to clear in_flight — sweep re-releases
+        forever, customer can't reach target."""
         async with self._lock:
             duplicate = tx_id in self._state.reported
+            task = self._state.in_flight.pop(tx_id, None)
+            self._state.in_flight_at.pop(tx_id, None)
+            if task and task.requester:
+                self._state.by_requester.pop(task.requester, None)
             if not duplicate:
                 self._state.reported.add(tx_id)
-                task = self._state.in_flight.pop(tx_id, None)
-                self._state.in_flight_at.pop(tx_id, None)
-                if task and task.requester:
-                    self._state.by_requester.pop(task.requester, None)
                 if applied:
                     self._state.applied += 1
                 else:
@@ -191,7 +208,12 @@ class Orchestrator:
         Defense against leaked in_flight slots when an activity fails before
         ReportDone lands (e.g. transient MCP/DB errors with no retry, or a
         worker crash mid-task). Returned tasks go to the front of the queue
-        so the next replenisher tick reassigns them quickly."""
+        so the next replenisher tick reassigns them quickly.
+
+        Returns the list of orphan requesters (workflow instance ids) so the
+        replenisher can restart-in-place — keeping the same workflow id
+        across retries so the audit trail shows continuity rather than
+        spawning a new instance under a fresh id."""
         async with self._lock:
             now = time.time()
             stale = [
@@ -199,12 +221,14 @@ class Orchestrator:
                 for tx_id, claimed_at in self._state.in_flight_at.items()
                 if now - claimed_at > timeout_seconds
             ]
+            orphans: list[str] = []
             for tx_id in stale:
                 task = self._state.in_flight.pop(tx_id, None)
                 self._state.in_flight_at.pop(tx_id, None)
                 if task is None:
                     continue
                 if task.requester:
+                    orphans.append(task.requester)
                     self._state.by_requester.pop(task.requester, None)
                 # Front of queue → fast retry; otherwise tasks pile up at end
                 # while replenisher chews through fresh ones.
@@ -214,7 +238,58 @@ class Orchestrator:
                 "released": len(stale),
                 "released_total": self._state.released,
                 "in_flight": len(self._state.in_flight),
+                "orphans": orphans,
             }
+
+    async def reconcile(self) -> dict[str, Any]:
+        """Cross-check the `reported` set against the DB and recover ghost
+        tx_ids — ones the orchestrator marked applied but that never landed
+        in transactions (rare race under chaos when an activity timed out
+        or a connection was abruptly closed mid-credit). For each ghost:
+        un-report it, decrement applied, push the task back onto the queue
+        so the replenisher will retry it. Re-attempts are idempotent — if
+        the row IS actually in the DB (false-positive ghost), the next
+        credit_account call gets a conflict and reports applied=False."""
+        if self._db is None:
+            return {"ghosts": 0}
+        async with self._lock:
+            run_id = self._state.execution_run_id
+            target = self._state.target
+            reported_snapshot = set(self._state.reported)
+            already_pending = {t.tx_id for t in self._state.queue} | set(
+                self._state.in_flight
+            )
+        if not run_id:
+            return {"ghosts": 0}
+        actual = await self._db.get_transaction_ids(run_id)
+        ghosts = reported_snapshot - actual - already_pending
+        if not ghosts:
+            return {"ghosts": 0}
+        requeued = 0
+        async with self._lock:
+            for tx_id in ghosts:
+                # Double-check inside the lock — a concurrent report_done
+                # could have re-added something.
+                if tx_id not in self._state.reported:
+                    continue
+                parsed = _parse_tx_id(tx_id)
+                if not parsed:
+                    continue
+                customer_id, n = parsed
+                self._state.reported.discard(tx_id)
+                if self._state.applied > 0:
+                    self._state.applied -= 1
+                self._state.queue.append(
+                    Task(
+                        customer_id=customer_id,
+                        tx_id=tx_id,
+                        target=target,
+                        n=n,
+                        execution_run_id=run_id,
+                    )
+                )
+                requeued += 1
+        return {"ghosts": len(ghosts), "requeued": requeued}
 
     async def status(self) -> dict[str, Any]:
         async with self._lock:

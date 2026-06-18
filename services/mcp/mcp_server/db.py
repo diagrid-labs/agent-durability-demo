@@ -164,6 +164,16 @@ class Database:
         )
         return int(val or 0)
 
+    async def get_transaction_ids(self, execution_run_id: int) -> set[str]:
+        """Return the set of tx_ids that have committed for this run. Used
+        by the orchestrator's reconciliation step to detect ghosts —
+        tx_ids the orchestrator believes applied but that aren't in the DB."""
+        rows = await self.pool.fetch(
+            "SELECT tx_id FROM transactions WHERE execution_run_id = $1",
+            execution_run_id,
+        )
+        return {r["tx_id"] for r in rows}
+
     async def current_execution_run(self) -> dict[str, Any]:
         row = await self.pool.fetchrow(
             """
