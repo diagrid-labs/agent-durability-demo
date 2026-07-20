@@ -1,4 +1,4 @@
-Bank Heist Ingress installed.
+Bank Creditor Ingress installed.
 
 Get the public IP assigned to ingress-nginx:
 

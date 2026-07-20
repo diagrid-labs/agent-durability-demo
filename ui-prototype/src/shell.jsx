@@ -38,7 +38,7 @@ function TopBar({ state, feed, onTogglePause }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <img src="assets/diagrid-logo.png" alt="Diagrid" style={{ height: 26, width: 'auto', display: 'block' }} />
           <span style={{ color: 'var(--line-strong)', fontSize: 18, fontWeight: 300 }}>/</span>
-          <span style={{ fontSize: 14, color: 'var(--fg-1)', fontWeight: 500 }}>Bank Heist Demo</span>
+          <span style={{ fontSize: 14, color: 'var(--fg-1)', fontWeight: 500 }}>Bank Creditor Demo</span>
           {run.executionRunId != null && (
             <span className="pill" style={{ fontSize: 11, padding: '2px 8px' }}
                   title="Active execution run">

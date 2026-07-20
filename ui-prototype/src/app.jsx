@@ -30,13 +30,13 @@ function App() {
 
   return (
     <div style={{
-      height: '100vh', width: '100vw',
+      height: '100%', width: '100%',
       display: 'grid',
       gridTemplate: `
         "top    top    top    top"    auto
         "count  count  count  count"  auto
         "cust   agents fleet  side"   minmax(0, 1fr)
-        / minmax(220px, 0.9fr) minmax(360px, 1.3fr) minmax(220px, 0.9fr) minmax(280px, 1fr)
+        / minmax(220px, 0.8fr) minmax(460px, 1.8fr) minmax(220px, 0.75fr) minmax(280px, 0.85fr)
       `,
       gap: 10,
       paddingBottom: 10,

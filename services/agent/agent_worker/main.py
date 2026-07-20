@@ -2,7 +2,6 @@ import asyncio
 import contextlib
 import logging
 import os
-import time
 
 import httpx
 from dapr.ext.workflow import DaprWorkflowClient, WorkflowRuntime
@@ -114,7 +113,6 @@ def schedule_one(body: ScheduleOneBody) -> dict:
     the schedule_new_workflow gRPC call. No in-process state — any agent
     replica can serve this and Dapr's placement service routes the workflow
     onto whichever agent ends up hosting it."""
-    # See the comment in `/spawn-agents` (further down) — same name choice.
     workflow_name = os.environ.get(
         "FORCE_WORKFLOW_NAME", "dapr.agents.banker.workflow"
     )
@@ -162,162 +160,6 @@ def trigger(body: TriggerBody) -> dict:
         instance_id=instance_id,
     )
     return {"instance_id": returned_id, "workflow": workflow_name}
-
-
-MCP_HTTP_BASE = os.environ.get("MCP_HTTP_BASE", "http://localhost:9000")
-
-
-class SpawnAgentsBody(BaseModel):
-    agents: int = Field(default=100, ge=1, le=500)
-    customers: int = Field(default=10, ge=1, le=100)
-    credits_per_customer: int = Field(default=100, ge=1, le=1000)
-    target: int = Field(default=200, ge=1, le=10_000)
-
-
-class _RunState:
-    """Tracks one in-progress demo run: target concurrency, slot counters,
-    and the replenisher task that maintains the agent pool."""
-
-    def __init__(self) -> None:
-        self.run_tag: int | None = None
-        self.target_concurrency: int = 100
-        self.slot_counters: dict[int, int] = {}
-        self.spawn_count: int = 0
-        self.last_status: dict[str, int] = {}
-        self.task: asyncio.Task | None = None
-
-
-_run = _RunState()
-
-
-def _schedule_one(wf_client: DaprWorkflowClient, instance_id: str, prompt: str) -> bool:
-    def _wf_proxy():  # noqa: D401
-        pass
-
-    _wf_proxy.__name__ = os.environ.get(
-        "FORCE_WORKFLOW_NAME", "dapr.agents.banker.workflow"
-    )
-    try:
-        wf_client.schedule_new_workflow(
-            workflow=_wf_proxy,
-            input={"task": prompt},
-            instance_id=instance_id,
-        )
-        return True
-    except Exception as e:  # noqa: BLE001
-        log.warning("schedule %s failed: %s", instance_id, e)
-        return False
-
-
-async def _replenish_loop() -> None:
-    """Maintain `_run.target_concurrency` workflows in-flight until the
-    queue drains. Polls /orch/status every 0.5s and spawns enough single-task
-    workflows to fill the deficit. Workflow instance IDs use the heatmap's
-    `agent-NNN` cell label so Catalyst's workflow list reads as the same
-    100 agents the UI shows."""
-    wf_client = DaprWorkflowClient()
-    async with httpx.AsyncClient() as client:
-        while True:
-            try:
-                # Reclaim leaked in_flight slots before computing deficit.
-                await client.post(
-                    f"{MCP_HTTP_BASE}/orch/sweep",
-                    json={"timeout_seconds": 30.0},
-                    timeout=5.0,
-                )
-                r = await client.get(f"{MCP_HTTP_BASE}/orch/status", timeout=5.0)
-                snap = r.json()
-            except Exception as e:  # noqa: BLE001
-                log.warning("orch status poll failed: %s", e)
-                await asyncio.sleep(2.0)
-                continue
-
-            _run.last_status = snap
-            queue_remaining = int(snap.get("queue_remaining", 0))
-            in_flight = int(snap.get("in_flight", 0))
-
-            if queue_remaining == 0 and in_flight == 0:
-                log.info(
-                    "replenisher done: applied=%s skipped=%s spawn_count=%s",
-                    snap.get("applied_total"),
-                    snap.get("skipped_total"),
-                    _run.spawn_count,
-                )
-                return
-
-            deficit = _run.target_concurrency - in_flight
-            if deficit > 0 and queue_remaining > 0:
-                count = min(deficit, queue_remaining)
-                slots = sorted(
-                    range(1, _run.target_concurrency + 1),
-                    key=lambda s: _run.slot_counters.get(s, 0),
-                )
-                for slot in slots[:count]:
-                    k = _run.slot_counters.get(slot, 0) + 1
-                    _run.slot_counters[slot] = k
-                    instance_id = (
-                        f"agent-{slot:03d}-task-{k}-r{_run.run_tag}"
-                    )
-                    prompt = (
-                        f"requester={instance_id}: claim and "
-                        "process exactly one credit task, then stop."
-                    )
-                    if _schedule_one(wf_client, instance_id, prompt):
-                        _run.spawn_count += 1
-
-            await asyncio.sleep(0.5)
-
-
-@app.post("/spawn-agents")
-async def spawn_agents(body: SpawnAgentsBody) -> dict:
-    # Reset orchestrator queue to a known starting state.
-    async with httpx.AsyncClient() as client:
-        r = await client.post(
-            f"{MCP_HTTP_BASE}/orch/reset",
-            json={
-                "customers": body.customers,
-                "credits_per_customer": body.credits_per_customer,
-                "target": body.target,
-            },
-            timeout=10.0,
-        )
-        r.raise_for_status()
-        orch_state = r.json()
-
-    _run.run_tag = int(time.time())
-    _run.target_concurrency = body.agents
-    _run.slot_counters.clear()
-    _run.spawn_count = 0
-
-    if _run.task is not None and not _run.task.done():
-        _run.task.cancel()
-
-    _run.task = asyncio.create_task(_replenish_loop())
-
-    return {
-        "run_tag": _run.run_tag,
-        "target_concurrency": _run.target_concurrency,
-        "orchestrator": orch_state,
-    }
-
-
-@app.get("/run-status")
-async def run_status() -> dict:
-    return {
-        "run_tag": _run.run_tag,
-        "target_concurrency": _run.target_concurrency,
-        "spawn_count": _run.spawn_count,
-        "replenisher_running": _run.task is not None and not _run.task.done(),
-        "orchestrator": _run.last_status,
-    }
-
-
-@app.post("/stop-agents")
-async def stop_agents() -> dict:
-    if _run.task and not _run.task.done():
-        _run.task.cancel()
-        return {"stopped": True}
-    return {"stopped": False, "reason": "no replenisher running"}
 
 
 @app.get("/status/{instance_id}")

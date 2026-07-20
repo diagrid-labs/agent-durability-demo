@@ -1,4 +1,4 @@
-Postgres for the Bank Heist demo is deployed.
+Postgres for the Bank Creditor demo is deployed.
 
 Service (in-cluster):
   postgres.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}

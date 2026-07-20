@@ -1,12 +1,12 @@
 [project]
-name = "bank-heist-agent"
+name = "bank-creditor-agent"
 version = "0.1.0"
-description = "Dapr workflow worker for the Bank Heist demo"
+description = "Dapr workflow worker for the Bank Creditor demo"
 requires-python = ">=3.11"
 dependencies = [
-  "dapr-agents>=0.5.0",
-  "dapr>=1.13.0",
-  "dapr-ext-workflow>=1.13.0",
+  "dapr-agents>=1.0.5",
+  "dapr>=1.18.3",
+  "dapr-ext-workflow>=1.18.3",
   "mcp>=1.2.0",
   "fastapi>=0.110.0",
   "uvicorn[standard]>=0.30.0",

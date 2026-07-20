@@ -1,4 +1,4 @@
-# Bank Heist Demo
+# Bank Creditor Demo
 
 Dapr Agents durability demo. 100 agents credit 10 customer accounts from $100 → $200, $1 at a time, while chaos is injected.
 
@@ -28,12 +28,13 @@ Dapr Agents durability demo. 100 agents credit 10 customer accounts from $100 �
 └──────────────────────────────────────────────────────────────────┘
 ```
 
+The agent reaches its Postgres-backed tools (`get_balance`, `credit_account`, etc.) through Catalyst's managed MCP proxy — there's no non-Catalyst transport for this anymore. Every path below therefore requires a Catalyst project (Self-Hosted or Cloud); pick based on where the *cluster* lives.
+
 Pick a deployment path:
 
-- [**Deploying to Kubernetes**](#deploying-to-kubernetes) — production-shaped, vendor-neutral. Bring your own cluster (AKS, EKS, GKE, kind, k3s).
-  - [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md) — Diagrid Catalyst Self-Hosted in the same cluster (no daprd sidecar; SDK talks to in-cluster gateway)
-- [**Local deployment with Dapr**](#local-deployment-with-dapr) — docker compose for Postgres + MCP, agent runs locally with a self-hosted `dapr run` sidecar.
-- [**Local deployment with Catalyst**](#local-deployment-with-catalyst) — docker compose for Postgres + MCP, agent runs locally with Diagrid Catalyst providing managed Dapr APIs.
+- [**Deploying to Kubernetes**](#deploying-to-kubernetes) — production-shaped. Bring your own cluster (AKS, EKS, GKE, kind, k3s).
+  - [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md) — Diagrid Catalyst Self-Hosted in the same cluster (no daprd sidecar; SDK talks to in-cluster gateway), including the MCP server registration + access-grant steps.
+- [**Local deployment with Catalyst**](#local-deployment-with-catalyst) — docker compose for Postgres + MCP, agent runs locally with Diagrid Catalyst providing managed Dapr APIs and the MCP proxy.
 
 ---
 
@@ -47,8 +48,8 @@ The demo expects three "logical" node groups, identified by labels. How you prod
 
 | Label | Workload it hosts |
 |---|---|
-| `bank-heist.role=platform` | Postgres, MCP server (never chaos target) |
-| `bank-heist.role=agents` | Agent worker pods (chaos target) |
+| `bank-creditor.role=platform` | Postgres, MCP server (never chaos target) |
+| `bank-creditor.role=agents` | Agent worker pods (chaos target) |
 
 If your cluster has Azure-AZ-style zones, AKS/EKS auto-set `topology.kubernetes.io/zone` on each node — the agent Deployment uses that for `topologySpreadConstraints` so one pod lands in each AZ. Not required; the demo still runs on a single zone.
 
@@ -59,7 +60,7 @@ Storage class: the Postgres chart defaults to `managed-csi` (AKS). Override with
 The cluster needs to be able to pull from wherever you push to. Docker Hub is the default in the charts:
 
 ```bash
-export REGISTRY=tezizzm                # docker hub default in the charts
+export REGISTRY=alicejgibbons          # docker hub default in the charts
 # Or any other accessible registry:
 # export REGISTRY=myacr.azurecr.io     # ACR
 # export REGISTRY=ghcr.io/myorg        # GHCR
@@ -74,23 +75,19 @@ If your laptop arch differs from the cluster nodes (e.g. Apple Silicon → x86_6
 docker buildx create --use --name multiarch 2>/dev/null || docker buildx use multiarch
 
 docker buildx build --platform linux/amd64 \
-  -t $REGISTRY/bank-heist-mcp:0.1.0 \
+  -t $REGISTRY/bank-creditor-mcp:0.1.0 \
   -f services/mcp/Dockerfile --push .
 
 docker buildx build --platform linux/amd64 \
-  -t $REGISTRY/bank-heist-agent:0.1.0 \
+  -t $REGISTRY/bank-creditor-agent:0.1.0 \
   --push services/agent
 ```
 
 (Drop `--platform linux/amd64` if your laptop already matches the cluster, or change it to `linux/arm64` for ARM clusters.)
 
-### 3. Install Dapr
+### 3. Install Catalyst and create app-ids
 
-```bash
-brew install dapr/tap/dapr-cli   # or: curl https://raw.githubusercontent.com/dapr/cli/master/install/install.sh | bash
-dapr init -k --wait
-dapr status -k                   # all components Healthy
-```
+Follow [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md)'s project + app-id setup before continuing — this demo has no plain-Dapr fallback (`dapr init -k` alone isn't enough) since the agent's tool calls now go through Catalyst's MCP proxy. Come back here once `bank-agent-creditor` shows `ready` in `diagrid appid list`.
 
 ### 4. Choose how the UI gets exposed
 
@@ -106,7 +103,7 @@ The MCP server is the only externally-reachable component (it hosts the UI plus 
 **b. `kubectl port-forward` for local-only access.** No LB, no DNS:
 
 ```bash
-kubectl -n bank-heist port-forward svc/mcp 8080:80
+kubectl -n bank-creditor port-forward svc/mcp 8080:80
 # open http://localhost:8080/
 ```
 
@@ -115,18 +112,18 @@ kubectl -n bank-heist port-forward svc/mcp 8080:80
 ### 5. Deploy the demo
 
 ```bash
-NS=bank-heist
+NS=bank-creditor
 kubectl create namespace $NS
 
 helm install postgres deploy/postgres -n $NS
 kubectl -n $NS rollout status statefulset/postgres
 
 helm install mcp deploy/mcp -n $NS \
-  --set image.repository=$REGISTRY/bank-heist-mcp \
+  --set image.repository=$REGISTRY/bank-creditor-mcp \
   --set service.azureDnsLabel=<unique-label>   # required on AKS to avoid colliding with the demo's default label
 
 helm install agent deploy/agent -n $NS \
-  --set image.repository=$REGISTRY/bank-heist-agent
+  --set image.repository=$REGISTRY/bank-creditor-agent
 
 kubectl -n $NS rollout status deployment/mcp
 kubectl -n $NS rollout status deployment/agent
@@ -136,9 +133,11 @@ Verify pod placement:
 
 ```bash
 kubectl -n $NS get pods -o wide
-# postgres + mcp should be on a `bank-heist.role=platform` node
-# agent replicas should be on `bank-heist.role=agents` nodes (one per zone if multi-AZ)
+# postgres + mcp should be on a `bank-creditor.role=platform` node
+# agent replicas should be on `bank-creditor.role=agents` nodes (one per zone if multi-AZ)
 ```
+
+Now that `mcp` is deployed and reachable, register it with Catalyst and grant the agent access — see [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md)'s MCP server section for the exact `diagrid mcpserver create` / `access grant` commands. Workflows will fail until this grant exists.
 
 ### 6. Open the UI
 
@@ -167,7 +166,7 @@ kubectl -n $NS exec postgres-0 -- psql -U bankadmin -d bankdemo -c \
 
 ```bash
 docker buildx build --platform linux/amd64 \
-  -t $REGISTRY/bank-heist-mcp:0.1.0 \
+  -t $REGISTRY/bank-creditor-mcp:0.1.0 \
   -f services/mcp/Dockerfile --push .
 kubectl -n $NS rollout restart deployment/mcp
 ```
@@ -186,88 +185,20 @@ kubectl delete namespace $NS
 
 ---
 
-## Local deployment with Dapr
-
-Self-hosted Dapr (`dapr init`) on your laptop. Postgres + MCP run in docker; the agent runs as a normal Python process with `dapr run` attaching a local sidecar.
-
-### Prerequisites
-
-- Docker (or Podman) with `docker compose`
-- [`uv`](https://docs.astral.sh/uv/) (Python toolchain)
-- Dapr CLI: `brew install dapr/tap/dapr-cli`
-
-### 1. Initialize self-hosted Dapr
-
-One-time per machine. Installs `daprd`, placement, and scheduler containers under `~/.dapr/`:
-
-```bash
-dapr init
-dapr status   # all components Running
-```
-
-### 2. Bring up Postgres + MCP
-
-```bash
-docker compose -f local/compose.yaml up -d --build
-curl -s http://localhost:9000/healthz   # → {"status":"ok"}
-```
-
-Postgres exposes port `5432`, MCP exposes `9000`. The compose init script seeds the `bankdemo` schema and creates an empty `dapr_state` database for the workflow checkpoint store.
-
-### 3. Run the agent with a local Dapr sidecar
-
-The agent's component manifest at `local/components/workflowstatestore.yaml` points the Dapr workflow runtime at the local `dapr_state` database.
-
-```bash
-cd services/agent
-uv sync
-
-dapr run --app-id agent-worker \
-  --app-port 8000 \
-  --dapr-http-port 3500 \
-  --resources-path ../../local/components \
-  -- env MCP_URL=http://localhost:9000/mcp/ \
-        MCP_HTTP_BASE=http://localhost:9000 \
-        STUB_LLM=true \
-        uv run uvicorn agent_worker.main:app --host 0.0.0.0 --port 8000
-```
-
-(The MCP service in compose already has `AGENT_HTTP_BASE=http://host.docker.internal:8000` set, so MCP's replenisher reaches your local agent automatically.)
-
-### 4. Open the UI
-
-`http://localhost:9000/` — same UI as AKS, just port-forwarded through compose.
-
-### 5. Verify the invariant
-
-```bash
-docker exec local-postgres-1 psql -U bankadmin -d bankdemo -c \
-  "SELECT execution_run_id, COUNT(*), SUM(amount) FROM transactions GROUP BY 1 ORDER BY 1 DESC LIMIT 3;"
-```
-
-### Tear down
-
-```bash
-# Stop the agent: Ctrl-C in the dapr run terminal
-docker compose -f local/compose.yaml down -v
-dapr uninstall   # optional, only if you want to nuke local Dapr too
-```
-
----
-
 ## Local deployment with Catalyst
 
-Same MCP + Postgres in docker, but the agent's Dapr APIs go through Diagrid Catalyst's managed control plane instead of a self-hosted sidecar. Good for testing the same agent code in a hosted-Dapr environment from your laptop.
+MCP + Postgres run in docker; the agent's Dapr APIs — including its MCP tool calls — go through Diagrid Catalyst's managed control plane instead of a local sidecar. This is the only supported local-dev path: the agent's tool-calling now depends on Catalyst's MCP proxy, which has no self-hosted-Dapr equivalent.
 
 Full instructions live in [**CATALYST.md**](./CATALYST.md). Quick outline:
 
 1. Provision the project with `--enable-managed-workflow --enable-agent-infrastructure`.
 2. Create the `agent-worker` app-id. `--enable-agent-infrastructure` auto-provisions an `agent-memory` state store you can reuse.
-3. `docker compose -f local/compose.yaml up -d --build` (same as the Dapr-local path).
+3. `docker compose -f local/compose.yaml up -d --build`.
 4. `cd services/agent && uv sync`.
-5. `diagrid dev run --file dapr.yaml --project <your-project> --skip-managed-kv --skip-managed-pubsub --skip-default-resiliency`.
+5. Register the MCP service as a Catalyst `MCPServer` and grant `agent-worker` access to its tools — see [CATALYST.md](./CATALYST.md)'s MCP section for the exact `diagrid mcpserver create` / `access grant` commands.
+6. `diagrid dev run --file dapr.yaml --project <your-project> --skip-managed-kv --skip-managed-pubsub --skip-default-resiliency`.
 
-Set `FORCE_WORKFLOW_NAME=agent_workflow` in the agent's env before step 5 — this runtime requires the short workflow alias rather than the fully-qualified name used elsewhere. See [CATALYST.md](./CATALYST.md) for the full walkthrough.
+Set `FORCE_WORKFLOW_NAME=agent_workflow` in the agent's env before step 6 — this runtime requires the short workflow alias rather than the fully-qualified name used elsewhere. See [CATALYST.md](./CATALYST.md) for the full walkthrough.
 
 ---
 
@@ -295,8 +226,7 @@ Set `FORCE_WORKFLOW_NAME=agent_workflow` in the agent's env before step 5 — th
 │   └── ingress/               # Helm chart: nginx Ingress
 ├── local/
 │   ├── compose.yaml           # docker compose: postgres + mcp (no agent — agent runs locally)
-│   ├── init.sql               # bankdemo schema + dapr_state DB
-│   └── components/            # Dapr component manifests for `dapr run` (self-hosted local)
+│   └── init.sql               # bankdemo schema + dapr_state DB
 ├── services/
 │   ├── mcp/                   # FastAPI + mcp SDK + asyncpg + orchestrator + replenisher + WS
 │   └── agent/                 # dapr-agents DurableAgent + stub LLM

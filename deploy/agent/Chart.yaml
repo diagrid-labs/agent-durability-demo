@@ -1,6 +1,6 @@
 apiVersion: v2
 name: agent
-description: Dapr workflow worker(s) for the Bank Heist demo
+description: Dapr workflow worker(s) for the Bank Creditor demo
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

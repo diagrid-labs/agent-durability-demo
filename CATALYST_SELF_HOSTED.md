@@ -58,7 +58,7 @@ kubectl get pods -n shared-postgresql
 
 ## 3. Resize the shared-postgresql + Kafka PVCs immediately
 
-The Catalyst chart defaults all storage PVCs to 1Gi. Bank-heist workflows fill that in well under a day. **Do this before workloads start writing:**
+The Catalyst chart defaults all storage PVCs to 1Gi. Bank Creditor workflows fill that in well under a day. **Do this before workloads start writing:**
 
 ```bash
 kubectl -n shared-postgresql patch pvc data-shared-postgresql-0 \
@@ -75,7 +75,7 @@ kubectl -n shared-kafka delete pod shared-kafka-controller-1   # wait for Runnin
 kubectl -n shared-kafka delete pod shared-kafka-controller-2
 ```
 
-## 4. Create the project + app IDs
+## 4. Create the project + app ID
 
 `--enable-agent-infrastructure` is **required at create time** — it auto-provisions the `agent-memory` state store the workflow runtime expects:
 
@@ -87,46 +87,27 @@ diagrid project create resiliency-demo \
   --use --wait
 
 diagrid appid create bank-agent-creditor --wait
-diagrid appid create bank-mcp-server --wait
-diagrid appid list   # both should show ready
+diagrid appid list   # should show ready
 ```
 
-Save the project ID (e.g. `prj1548627`) for the hostAliases step.
+Save the project ID (e.g. `prj1548627`) for the hostAliases step. There's no separate app-id for the MCP server anymore — registering it as a Catalyst `MCPServer` resource (step 8) provisions its own implicit app-id automatically.
 
-## 5. Configure the MCP app endpoint
-
-For Dapr service invocation, Catalyst needs to know where to forward calls. Generate an app token, store it, and register the endpoint:
-
-```bash
-APP_TOKEN=$(openssl rand -hex 32)
-
-diagrid appid update bank-mcp-server \
-  --app-endpoint http://mcp.bank-heist.svc.cluster.local/dapr/ \
-  --app-token "$APP_TOKEN" --wait
-
-echo -n "$APP_TOKEN" > /tmp/mcp-app-token.txt
-chmod 600 /tmp/mcp-app-token.txt
-```
-
-## 6. Create the K8s secrets
+## 5. Create the K8s secret
 
 ```bash
 # Agent's outbound auth token (fetch from Catalyst)
 diagrid appid get bank-agent-creditor -o json | jq -r '.status.apiToken' > /tmp/agent-api-token.txt
 chmod 600 /tmp/agent-api-token.txt
 
-kubectl create namespace bank-heist --dry-run=client -o yaml | kubectl apply -f -
+kubectl create namespace bank-creditor --dry-run=client -o yaml | kubectl apply -f -
 
-kubectl -n bank-heist delete secret catalyst-agent-worker catalyst-mcp-server --ignore-not-found
+kubectl -n bank-creditor delete secret catalyst-agent-worker --ignore-not-found
 
-kubectl -n bank-heist create secret generic catalyst-agent-worker \
+kubectl -n bank-creditor create secret generic catalyst-agent-worker \
   --from-literal=DAPR_API_TOKEN="$(tr -d '\n' < /tmp/agent-api-token.txt)"
-
-kubectl -n bank-heist create secret generic catalyst-mcp-server \
-  --from-literal=DAPR_APP_TOKEN="$(tr -d '\n' < /tmp/mcp-app-token.txt)"
 ```
 
-## 7. Write the agent Helm overlay
+## 6. Write the agent Helm overlay
 
 The agent needs Catalyst endpoint URLs + a `hostAliases` mapping that points the Catalyst hostnames at the **in-cluster gateway ClusterIP** — required to work around AKS hairpin NAT (pods can't reach their own cluster's public LB IP).
 
@@ -161,21 +142,20 @@ EOF
 >
 > **On EKS / GKE / clusters without hairpin issues**, this is harmless redundancy but still recommended — it removes a dependency on cluster DNS reaching the public hostname.
 
-## 8. Install the demo charts
+## 7. Install the demo charts
 
 ```bash
-helm -n bank-heist upgrade --install postgres ./deploy/postgres --wait
+helm -n bank-creditor upgrade --install postgres ./deploy/postgres --wait
 
 # AKS: keep service.azureDnsLabel — gets you a public DNS hostname for free.
 # Non-AKS: override service.type to ClusterIP (use ingress) or NodePort,
 #         and drop the azureDnsLabel — it's an AKS-only annotation.
-helm -n bank-heist upgrade --install mcp ./deploy/mcp \
+helm -n bank-creditor upgrade --install mcp ./deploy/mcp \
   -f ./deploy/mcp/values.yaml \
-  --set catalyst.enabled=true \
   --set service.azureDnsLabel=<unique-label-in-region> \
   --wait
 
-helm -n bank-heist upgrade --install agent ./deploy/agent \
+helm -n bank-creditor upgrade --install agent ./deploy/agent \
   -f ./deploy/agent/values.yaml \
   -f /tmp/agent-catalyst-overlay.yaml \
   --wait
@@ -190,11 +170,32 @@ The MCP chart defaults to `service.type: LoadBalancer` with `service.azureDnsLab
 - **EKS / GKE**: the annotation is silently ignored; you'll still get a `LoadBalancer` IP, just no DNS — use your own DNS or an ingress.
 - **kind / k3s / minikube**: no cloud LB available — override `--set service.type=ClusterIP` and use `kubectl port-forward` or the `deploy/ingress` chart.
 
+## 8. Register the MCP server and grant access
+
+The agent reaches its Postgres-backed tools (`get_balance`, `credit_account`, `get_next_task`, `report_done`) through Catalyst's managed MCP proxy, not direct Dapr service invocation. Register the `mcp` Service's FastMCP endpoint as an `MCPServer` resource, then grant `bank-agent-creditor` access — new MCP servers deny every tool until granted:
+
+```bash
+diagrid mcpserver create bank-postgres-mcp \
+  --project resiliency-demo \
+  --url http://mcp.bank-creditor.svc.cluster.local/mcp/ \
+  --wait
+
+diagrid mcpserver access grant bank-postgres-mcp \
+  --project resiliency-demo \
+  --caller bank-agent-creditor \
+  --allow-tools get_balance,credit_account,get_next_task,report_done \
+  --wait
+```
+
+This must come **after** the `mcp` chart is installed (step 7) — Catalyst validates the upstream URL when registering. `bank-postgres-mcp` becomes its own implicit app-id automatically; you don't create one for it separately.
+
+If the agent's tool calls come back `403 Forbidden`, the grant above didn't take — re-run `diagrid mcpserver access get bank-postgres-mcp --project resiliency-demo` to confirm `bank-agent-creditor` is listed with all four tools.
+
 ## 9. Verify
 
 ```bash
-kubectl -n bank-heist get pods
-kubectl -n bank-heist logs deploy/agent --since=2m | grep -iE 'workflow|catalyst|registered|endpoint' | head -20
+kubectl -n bank-creditor get pods
+kubectl -n bank-creditor logs deploy/agent --since=2m | grep -iE 'workflow|catalyst|registered|endpoint' | head -20
 ```
 
 You want:
@@ -206,7 +207,7 @@ Then hit the UI at the MCP LB's external hostname (`http://<label>.<region>.clou
 
 ## Tear-down
 
-To wipe the Self-Hosted control plane (preserves the `bank-heist` namespace + app data):
+To wipe the Self-Hosted control plane (preserves the `bank-creditor` namespace + app data):
 
 ```bash
 helm -n cra-agent uninstall catalyst-otel-logs-collector catalyst-otel-metrics-collector catalyst
@@ -226,8 +227,9 @@ diagrid region delete my-sh-region
 ## Common failure modes
 
 - **Workflow scheduled but errors with "state store not found"** — `--enable-agent-infrastructure` wasn't passed at project-create time. See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#failed-to-create-orchestration-instance-the-state-store-is-not-found--state-store--is-not-found).
-- **Agent logs show `Connection timed out` retrying the LB external IP** — `hostAliases` didn't take. Confirm with `kubectl -n bank-heist get deploy agent -o yaml | grep -A4 hostAliases`.
-- **MCP route returning ConnectTimeout** — `MCP_URL` set with explicit `:8000` (port 8000 doesn't exist on the Service). Use port-less URL.
+- **Agent logs show `Connection timed out` retrying the LB external IP** — `hostAliases` didn't take. Confirm with `kubectl -n bank-creditor get deploy agent -o yaml | grep -A4 hostAliases`.
+- **Tool calls fail with `upstream HTTP 405`** — Catalyst's MCP proxy relays the caller's request to the registered upstream URL with the trailing slash stripped, even though the URL was registered with one. FastMCP's own Mount only gives Starlette a partial match for the bare path, so it falls through to the `/` static-files catch-all, which rejects POST outright. Fixed server-side by `_MCPTrailingSlashMiddleware` in `services/mcp/mcp_server/server.py` — if you see this on a *different* MCP server, add an equivalent path-normalizing shim in front of it.
+- **Tool calls fail with `403 Forbidden`** — no access grant yet, or it doesn't cover the tool being called. Run `diagrid mcpserver access grant` from step 8.
 - **`diagrid` CLI times out to LB IP from your laptop** — port-override.yaml in step 2 not applied. The chart defaults to 8080/8443, the CLI hardcodes 443.
 - **gRPC `UNIMPLEMENTED`** — agent endpoint is pointing at the per-app inbound hostname instead of `grpc-prj<id>.<wildcard>` (the project-scoped outbound).
 

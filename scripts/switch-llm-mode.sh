@@ -6,13 +6,13 @@
 #   ./scripts/switch-llm-mode.sh real
 #
 # For `real`, the script ensures a Secret named `openai-api-key` exists in the
-# bank-heist namespace with key OPENAI_API_KEY. If missing, it reads from the
+# bank-creditor namespace with key OPENAI_API_KEY. If missing, it reads from the
 # OPENAI_API_KEY env var (export it before running).
 
 set -euo pipefail
 
 MODE="${1:-}"
-NAMESPACE="${NAMESPACE:-bank-heist}"
+NAMESPACE="${NAMESPACE:-bank-creditor}"
 RELEASE="${RELEASE:-agent}"
 CHART="${CHART:-./deploy/agent}"
 SECRET="${OPENAI_SECRET_NAME:-openai-api-key}"

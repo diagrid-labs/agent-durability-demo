@@ -471,7 +471,7 @@ function createTelemetry(initial) {
       emit();
       postJSON('/chaos/az-kill', z ? { zone: z.zone } : {}).catch(() => {});
     },
-    // Agent worker control (proxied through MCP server → /spawn-agents)
+    // Agent worker control (MCP server's /agent/spawn drives its in-process Replenisher)
     async startRun(opts) {
       const body = {
         agents: Number((opts && opts.agents) ?? cfg.agentCount),

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from mcp.server.fastmcp import FastMCP
@@ -113,9 +113,26 @@ async def _drain_tx_queue() -> None:
         await broadcaster.broadcast(data)
 
 
+class _MCPTrailingSlashMiddleware:
+    """Catalyst's MCP proxy relays a caller's actual tool-call requests to the
+    registered upstream URL with the trailing slash stripped (its own health
+    ping keeps the slash). Bare `/mcp` only gets a partial match against the
+    `/mcp` Mount below, so Starlette falls through to the `/` StaticFiles
+    catch-all, which rejects POST with 405 before FastMCP ever sees it.
+    Normalize the path here, ahead of routing."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"] == "/mcp":
+            scope = dict(scope, path="/mcp/")
+        await self.app(scope, receive, send)
+
+
 log_mcp("sys", "CONNECT mcp://postgres.bank.svc · session opened")
 mcp = FastMCP(
-    "bank-heist-postgres",
+    "bank-creditor-postgres",
     streamable_http_path="/",
     # Stateless: every request is independent, no session ID required. Lets us
     # run multiple MCP server replicas without session affinity in the Service.
@@ -124,9 +141,9 @@ mcp = FastMCP(
     # Allow the in-cluster Service DNS so agent pods can reach us via k8s DNS.
     transport_security=TransportSecuritySettings(
         allowed_hosts=[
-            "mcp.bank-heist.svc.cluster.local",
-            "mcp.bank-heist.svc.cluster.local:80",
-            "mcp.bank-heist.svc.cluster.local:8000",
+            "mcp.bank-creditor.svc.cluster.local",
+            "mcp.bank-creditor.svc.cluster.local:80",
+            "mcp.bank-creditor.svc.cluster.local:8000",
             "mcp",
             "mcp:80",
             "mcp:8000",
@@ -186,8 +203,7 @@ async def credit_account(
     `wf-{instance_id}-step-{n}`); the (execution_run_id, tx_id) pair is the
     composite idempotency key — duplicates are absorbed and return the
     existing balance with `applied=false`. Always pass through the
-    execution_run_id you received from get_next_task / process_task — never
-    invent one."""
+    execution_run_id you received from get_next_task — never invent one."""
     log_mcp(
         "req",
         f"credit_account run={execution_run_id} cust={customer_id} +${amount} tx={tx_id}",
@@ -240,71 +256,6 @@ def _slot_from_requester(requester: str | None) -> int | None:
     return int(m.group(1)) if m else None
 
 
-@mcp.tool()
-async def process_task(requester: str = "", pod: str = "") -> dict[str, Any]:
-    """Atomically claim + balance-check + (credit if needed) + report a single
-    task. Equivalent to GetNextTask → GetBalance → CreditAccount? → ReportDone
-    rolled into one call. Cuts the workflow's activity count from ~17 to ~7,
-    which matters when the Catalyst worker is far from a managed-workflow
-    region.
-
-    `requester` is your stable workflow identity (replays return the same
-    task). `pod` is the agent pod hostname; the server records `slot → pod`
-    so pod-kill chaos darkens the exact heatmap cells that lived on the
-    killed pod. Returns {done: true} when the queue is drained, otherwise
-    {done: false, tx_id, customer_id, applied, balance_before, target}."""
-    task = await orch.next_task(requester=requester or None)
-    if task.get("done"):
-        return {"done": True}
-
-    customer_id = int(task["customer_id"])
-    tx_id = str(task["tx_id"])
-    target = float(task["target"])
-    execution_run_id = int(task["execution_run_id"])
-    agent_slot = _slot_from_requester(requester)
-    if agent_slot is not None and pod:
-        await slots.record(agent_slot, pod)
-
-    applied = False
-    balance: float | None = None
-    error: str | None = None
-    try:
-        # Mirrors the chaos points that GetBalance / CreditAccount apply in
-        # Match the chaos points the multi-tool flow applies.
-        await chaos.maybe_delay()
-        balance_row = await db.get_balance(customer_id)
-        if balance_row is None:
-            error = f"customer {customer_id} not found"
-        else:
-            balance = float(balance_row["balance"])
-            if balance < target:
-                await chaos.maybe_delay()
-                chaos.maybe_drop()
-                credit_result = await db.credit_account(
-                    customer_id, 1, tx_id, "banker",
-                    execution_run_id, agent_slot,
-                )
-                applied = bool(credit_result.get("applied", True))
-    except Exception as e:  # noqa: BLE001
-        # On transient failure, release the slot instead of marking done.
-        error = str(e)
-    finally:
-        if error is not None and not applied:
-            await orch.release_for_retry(tx_id)
-        else:
-            await orch.report_done(tx_id, applied)
-
-    return {
-        "done": False,
-        "tx_id": tx_id,
-        "customer_id": customer_id,
-        "applied": applied,
-        "balance_before": balance,
-        "target": target,
-        "error": error,
-    }
-
-
 # --- Chaos control surface (orchestrator-only; restrict via NetworkPolicy later) ---
 
 class DropBody(BaseModel):
@@ -346,6 +297,7 @@ def build_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(_MCPTrailingSlashMiddleware)
     app.mount("/mcp", mcp.streamable_http_app())
 
     @app.post("/chaos/drop")
@@ -561,80 +513,6 @@ def build_app() -> FastAPI:
     @app.get("/agent/status")
     async def agent_status() -> dict[str, Any]:
         return replenisher.status()
-
-    class OrchSweepBody(BaseModel):
-        timeout_seconds: float = Field(default=30.0, ge=1.0, le=600.0)
-
-    @app.post("/orch/sweep")
-    async def orch_sweep(body: OrchSweepBody) -> dict[str, Any]:
-        return await orch.sweep(timeout_seconds=body.timeout_seconds)
-
-    # Catalyst routes service-invocation calls to /dapr/<method>.
-    _DAPR_APP_TOKEN = os.environ.get("DAPR_APP_TOKEN", "")
-
-    def _check_app_token(request: Request) -> None:
-        if not _DAPR_APP_TOKEN:
-            return
-        sent = request.headers.get("dapr-api-token", "")
-        if sent != _DAPR_APP_TOKEN:
-            raise HTTPException(401, "invalid or missing dapr-api-token")
-
-    class DaprProcessTaskBody(BaseModel):
-        requester: str = ""
-        pod: str = ""
-
-    class DaprGetNextTaskBody(BaseModel):
-        requester: str = ""
-        pod: str = ""
-
-    class DaprGetBalanceBody(BaseModel):
-        customer_id: int
-
-    class DaprCreditAccountBody(BaseModel):
-        customer_id: int
-        amount: float
-        tx_id: str
-        agent_id: str
-        execution_run_id: int
-
-    class DaprReportDoneBody(BaseModel):
-        tx_id: str
-        applied: bool
-
-    @app.post("/dapr/process_task")
-    async def dapr_process_task(body: DaprProcessTaskBody, request: Request) -> dict[str, Any]:
-        _check_app_token(request)
-        log_mcp("req", f"[SI] process_task requester={body.requester or '-'}")
-        result = await process_task(requester=body.requester, pod=body.pod)
-        tag = "applied" if result.get("applied") else ("done" if result.get("done") else "noop")
-        log_mcp("res", f"[SI] process_task {tag} tx={result.get('tx_id','-')}")
-        return result
-
-    @app.post("/dapr/get_next_task")
-    async def dapr_get_next_task(body: DaprGetNextTaskBody, request: Request) -> dict[str, Any]:
-        _check_app_token(request)
-        return await get_next_task(requester=body.requester, pod=body.pod)
-
-    @app.post("/dapr/get_balance")
-    async def dapr_get_balance(body: DaprGetBalanceBody, request: Request) -> dict[str, Any]:
-        _check_app_token(request)
-        return await get_balance(customer_id=body.customer_id)
-
-    @app.post("/dapr/credit_account")
-    async def dapr_credit_account(body: DaprCreditAccountBody, request: Request) -> dict[str, Any]:
-        _check_app_token(request)
-        return await credit_account(
-            customer_id=body.customer_id,
-            amount=body.amount,
-            tx_id=body.tx_id,
-            agent_id=body.agent_id,
-            execution_run_id=body.execution_run_id,
-        )
-
-    @app.post("/dapr/report_done")
-    async def dapr_report_done(body: DaprReportDoneBody, request: Request) -> dict[str, Any]:
-        _check_app_token(request)
-        return await report_done(tx_id=body.tx_id, applied=body.applied)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:

@@ -54,14 +54,8 @@ spec:
           env:
             - name: LOG_LEVEL
               value: {{ .Values.logLevel | quote }}
-            - name: MCP_URL
-              value: {{ .Values.mcp.url | quote }}
-            - name: MCP_HTTP_BASE
-              value: {{ .Values.mcp.httpBase | quote }}
-            - name: USE_DAPR_INVOKE
-              value: {{ .Values.mcp.useDaprInvoke | default false | quote }}
-            - name: DAPR_MCP_APP_ID
-              value: {{ .Values.mcp.daprAppId | default "bank-mcp-server" | quote }}
+            - name: MCP_SERVER_NAME
+              value: {{ .Values.mcp.serverName | quote }}
             - name: STUB_LLM
               value: {{ eq .Values.agent.llm.mode "stub" | ternary "true" "false" | quote }}
             - name: AGENT_MODEL

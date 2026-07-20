@@ -10,8 +10,7 @@ function McpServer({ state }) {
       <div className="card-h">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <McpIcon />
-          <span className="label-md" style={{ color: 'var(--fg)' }}>MCP Server</span>
-          <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)' }}>Operations History</span>
+          <span className="label-md" style={{ color: 'var(--fg)' }}>MCP Server Calls</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span className={'pill ' + (state.mcp.connected ? 'green' : 'red')}>
@@ -23,7 +22,7 @@ function McpServer({ state }) {
       </div>
       <div ref={ref} style={{
         flex: 1, overflow: 'auto', padding: '8px 14px', minHeight: 0,
-        fontFamily: 'var(--mono)', fontSize: 11.5, lineHeight: 1.55,
+        fontFamily: 'var(--mono)', fontSize: 11, lineHeight: 1.55,
         background: '#fafbfc',
       }}>
         {lines.length === 0 && (
@@ -74,7 +73,6 @@ function McpIcon() {
 
 /* ================ Chaos panel ================ */
 function ChaosPanel({ feed, state }) {
-  const cfg = state.cfg;
   const inWave = !!state.chaos.activeWave || !!state.chaos.azDown ||
                  performance.now() < state.chaos.latencyUntil;
   return (
@@ -84,32 +82,33 @@ function ChaosPanel({ feed, state }) {
           <span className="label-md" style={{ color: 'var(--fg)' }}>Chaos experiment</span>
           {inWave && <span className="pill amber">active</span>}
         </div>
-        <span className="mono" style={{ fontSize: 10, color: 'var(--fg-3)' }}>
-          tick {cfg.tickMs}ms
-        </span>
       </div>
       <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8, overflow: 'auto', minHeight: 0 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
           <button className="btn sm" onClick={() => feed.control.killRandom()}
                   title="Pod dies mid-work (OOM, eviction, crash). Catalyst re-dispatches to a healthy worker."
-                  disabled={!state.chaos.victim}>
+                  disabled={!state.chaos.victim}
+                  style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {state.chaos.victim
               ? `Pod failure (~${state.chaos.victim.workflow_count} workflows)`
               : 'Pod failure'}
           </button>
           <button className="btn sm" onClick={() => feed.control.killAZ()}
                   title="All pods in one Availability Zone die. Surviving AZs absorb the load."
-                  disabled={!state.chaos.zoneVictim}>
+                  disabled={!state.chaos.zoneVictim}
+                  style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {state.chaos.zoneVictim
               ? `AZ failure: ${state.chaos.zoneVictim.zone} (~${state.chaos.zoneVictim.workflow_count} workflows)`
               : 'AZ failure'}
           </button>
           <button className="btn sm" onClick={() => feed.control.latencyJitter(10000)}
-                  title="Slow downstream (connection pool timeout, slow query). Workflows complete, just slower.">
+                  title="Slow downstream (connection pool timeout, slow query). Workflows complete, just slower."
+                  style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
             MCP Slowdown · 10s window
           </button>
           <button className="btn sm" onClick={() => feed.control.dropTx()}
-                  title="Next MCP call returns 5xx. Workflow retries; idempotency prevents double-credit.">
+                  title="Next MCP call returns 5xx. Workflow retries; idempotency prevents double-credit."
+                  style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
             Force MCP Call Error
           </button>
         </div>
@@ -137,13 +136,8 @@ function PodFleet({ state }) {
     <div className="card" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
       <div className="card-h">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span className="label-md" style={{ color: 'var(--fg)' }}>Operating environment</span>
+          <span className="label-md" style={{ color: 'var(--fg)' }}>Kubernetes cluster</span>
         </div>
-        {victim && (
-          <span className="pill amber" title={`next Kill 1 pod will target ${victim.pod}`}>
-            next: {victim.workflow_count} workflows
-          </span>
-        )}
       </div>
       <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 12, overflow: 'auto', minHeight: 0 }}>
         {/* Nodepools — control / agents / system overview */}
@@ -158,18 +152,13 @@ function PodFleet({ state }) {
                   border: '1px solid ' + (npImpacted ? 'var(--red)' : 'var(--line)'),
                   transition: 'background 240ms, border-color 240ms',
                 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-                    <span className="mono" style={{ fontSize: 11.5, fontWeight: 600, color: npImpacted ? 'var(--red)' : 'var(--fg-1)' }}>
+                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span className="mono" style={{ fontSize: 11, fontWeight: 600, color: npImpacted ? 'var(--red)' : 'var(--fg-1)' }}>
                       {np.name}
                     </span>
-                    <span className="mono" style={{ fontSize: 11, color: npImpacted ? 'var(--red)' : 'var(--fg-2)' }}>
-                      {npImpacted ? 'pods evicted' : `${np.ready}/${np.node_count} ready`}
-                    </span>
                   </div>
-                  <div style={{ marginTop: 2, fontSize: 10, color: 'var(--fg-3)' }}>
-                    {np.role && <span>role: {np.role}</span>}
-                    {np.role && np.zones && np.zones.length > 0 && <span> · </span>}
-                    {np.zones && np.zones.length > 0 && <span>{np.zones.join(', ')}</span>}
+                  <div className="mono" style={{ marginTop: 2, fontSize: 10, color: npImpacted ? 'var(--red)' : 'var(--fg-2)' }}>
+                    {npImpacted ? 'pods evicted' : `${np.ready}/${np.node_count} ready`}
                   </div>
                 </div>
               );
@@ -186,18 +175,17 @@ function PodFleet({ state }) {
                   padding: '4px 8px', borderRadius: 4,
                   background: nImpacted ? 'var(--red-soft)' : 'var(--bg-2, #fafbfc)',
                   border: '1px solid ' + (nImpacted ? 'var(--red)' : 'var(--line)'),
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6,
                   transition: 'background 240ms, border-color 240ms',
                 }}>
-                  <span className="mono" style={{ fontSize: 10.5, color: nImpacted ? 'var(--red)' : 'var(--fg-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {n.name}
-                  </span>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-                    {n.zone && <span className="mono" style={{ fontSize: 9.5, color: nImpacted ? 'var(--red)' : 'var(--fg-3)' }}>{n.zone}</span>}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6 }}>
+                    <span className="mono" style={{ fontSize: 10, color: nImpacted ? 'var(--red)' : 'var(--fg-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {n.name}
+                    </span>
                     <span className="dot" style={{
+                      flexShrink: 0,
                       background: nImpacted ? 'var(--red)' : (n.ready === 'True' ? 'var(--green)' : 'var(--red)'),
                     }} />
-                  </span>
+                  </div>
                 </div>
               );
             })}
@@ -219,7 +207,7 @@ function PodFleet({ state }) {
                 border: '1px solid ' + (isVictim ? 'var(--accent)' : 'var(--line)'),
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-                  <span className="mono" style={{ fontSize: 11.5, fontWeight: 500, color: 'var(--fg-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span className="mono" style={{ fontSize: 11, fontWeight: 500, color: 'var(--fg-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {p.pod}
                   </span>
                   <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: isVictim ? 'var(--accent)' : 'var(--fg)' }}>
@@ -234,7 +222,10 @@ function PodFleet({ state }) {
                   }} />
                 </div>
                 {p.node && (
-                  <div style={{ marginTop: 3, fontSize: 10, color: 'var(--fg-3)' }}>
+                  <div style={{
+                    marginTop: 3, fontSize: 10, color: 'var(--fg-3)',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>
                     {p.node}
                   </div>
                 )}
@@ -254,7 +245,7 @@ function PodFleetSection({ title, count, hint, children }) {
         display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6,
         paddingBottom: 4, borderBottom: '1px solid var(--line)',
       }}>
-        <span style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--fg-2)' }}>
+        <span className="label" style={{ fontWeight: 600, color: 'var(--fg-2)' }}>
           {title}
         </span>
         {count != null && (

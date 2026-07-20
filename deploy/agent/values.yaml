@@ -1,5 +1,5 @@
 image:
-  repository: tezizzm/bank-heist-agent
+  repository: alicejgibbons/bank-creditor-agent
   tag: "0.1.0"
   # Always-pull so demo iteration on the same tag picks up freshly pushed
   # images without bumping the tag. Switch to IfNotPresent for production.
@@ -16,20 +16,12 @@ service:
   port: 8000
 
 mcp:
-  # Trailing slash matters — FastMCP redirects /mcp → /mcp/, the client doesn't
-  # follow POST redirects. Port omitted = default 80 (the MCP Service port).
-  url: http://mcp.bank-heist.svc.cluster.local/mcp/
-  # Base URL (no path) — agent worker hits this for /orch/reset, /orch/sweep,
-  # /orch/status from its replenisher loop. Distinct from `url` above which is
-  # the MCP streamable-http endpoint.
-  httpBase: http://mcp.bank-heist.svc.cluster.local
-  # When true, the agent's `call_tool` routes through Dapr service invocation
-  # to the `daprAppId` instead of plain httpx to `mcp.url`. Requires the MCP
-  # chart's `catalyst.enabled=true` AND a bank-mcp-server app-id provisioned
-  # in Catalyst with its application endpoint pointing at MCP's public LB.
-  # Makes the agent→MCP edge visible in Catalyst's app graph.
-  useDaprInvoke: false
-  daprAppId: bank-mcp-server
+  # Name of the Catalyst MCPServer resource fronting the Postgres MCP server
+  # (registered via `diagrid mcpserver create` against the mcp Service's
+  # /mcp/ endpoint). The agent calls it at
+  # $DAPR_HTTP_ENDPOINT/v1.0/diagrid/mcp/<serverName> — requires an access
+  # grant for this app-id (`diagrid mcpserver access grant`).
+  serverName: bank-postgres-mcp
 
 # Workflow state store (Dapr Component, written by this chart).
 # In Catalyst mode (Cloud or Self-Hosted), the component is provisioned in
@@ -40,7 +32,7 @@ mcp:
 stateStore:
   create: false
   componentName: agent-memory
-  postgresHost: postgres.bank-heist.svc.cluster.local
+  postgresHost: postgres.bank-creditor.svc.cluster.local
   postgresPort: 5432
   postgresDatabase: dapr_state
   # Inline credentials for the demo. Unused when create=false.
@@ -74,7 +66,7 @@ resources:
 
 # Agent workers run in the agents nodepool — chaos targets.
 nodeSelector:
-  bank-heist.role: agents
+  bank-creditor.role: agents
 
 tolerations: []
 

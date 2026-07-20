@@ -4,7 +4,7 @@
 app.kubernetes.io/name: {{ include "mcp.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: mcp-server
-app.kubernetes.io/part-of: bank-heist
+app.kubernetes.io/part-of: bank-creditor
 {{- end -}}
 
 {{- define "mcp.selectorLabels" -}}

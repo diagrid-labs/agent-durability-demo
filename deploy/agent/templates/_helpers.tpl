@@ -4,7 +4,7 @@
 app.kubernetes.io/name: {{ include "agent.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: agent-worker
-app.kubernetes.io/part-of: bank-heist
+app.kubernetes.io/part-of: bank-creditor
 {{- end -}}
 
 {{- define "agent.selectorLabels" -}}

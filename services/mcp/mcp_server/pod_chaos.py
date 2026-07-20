@@ -147,7 +147,7 @@ class PodChaosController:
                 "name": n.metadata.name,
                 "nodepool": labels.get("agentpool"),
                 "zone": labels.get("topology.kubernetes.io/zone"),
-                "role": labels.get("bank-heist.role"),
+                "role": labels.get("bank-creditor.role"),
                 "ready": ready,
             })
         out.sort(key=lambda x: (x.get("nodepool") or "zzz", x["name"]))

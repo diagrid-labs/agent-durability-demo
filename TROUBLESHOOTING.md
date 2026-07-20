@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Common failures hit while bringing the Bank Heist demo up across the deploy paths (AKS + Catalyst Self-Hosted, local + Dapr, local + Catalyst). Most are environmental rather than code bugs.
+Common failures hit while bringing the Bank Creditor demo up across the deploy paths (AKS + Catalyst Self-Hosted, local + Catalyst). Most are environmental rather than code bugs.
 
 ## UI loads but customer balances never move
 
@@ -29,8 +29,8 @@ WorkflowRuntime INFO: Registering workflow 'dapr.agents.banker.workflow' with ru
 Schedule with that exact name. The code in `services/agent/agent_worker/main.py` does this by default. If something downstream has overridden it (e.g. `FORCE_WORKFLOW_NAME` env var), reset:
 
 ```bash
-kubectl -n bank-heist set env deployment/agent FORCE_WORKFLOW_NAME-
-kubectl -n bank-heist rollout restart deployment/agent
+kubectl -n bank-creditor set env deployment/agent FORCE_WORKFLOW_NAME-
+kubectl -n bank-creditor rollout restart deployment/agent
 ```
 
 If running locally under `diagrid dev run` and the fully-qualified name fails there, set `FORCE_WORKFLOW_NAME=agent_workflow` — local Catalyst's daprd has historically accepted only the short alias.
@@ -56,7 +56,7 @@ diagrid component list --project <your-project>
 **Upstream Dapr (no Catalyst)** — flip the chart back to creating its own Postgres-backed component:
 
 ```bash
-helm upgrade agent deploy/agent -n bank-heist --reuse-values \
+helm upgrade agent deploy/agent -n bank-creditor --reuse-values \
   --set stateStore.create=true \
   --set stateStore.componentName=workflowstatestore
 ```
@@ -65,7 +65,7 @@ Confirm the Component CRD exists:
 
 ```bash
 kubectl get crd | grep dapr.io          # CRDs installed? if not, dapr init -k --wait
-kubectl -n bank-heist get components.dapr.io
+kubectl -n bank-creditor get components.dapr.io
 ```
 
 ## Public LB IP exists but external traffic times out
@@ -123,17 +123,23 @@ Either:
 - The template should use nil-safe access: `(.Values.foo).enabled` instead of `.Values.foo.enabled`. Already applied for the demo's `catalyst` and `topologySpread` blocks.
 - Or `helm upgrade --reset-values` and re-pass everything.
 
-## `MCP_URL` returning 421 / requests hanging
+## MCP tool calls failing through Catalyst's proxy
 
-Two likely causes:
+The agent reaches the MCP server's tools (`get_balance`, `credit_account`, `get_next_task`, `report_done`) at `$DAPR_HTTP_ENDPOINT/v1.0/diagrid/mcp/<MCP_SERVER_NAME>`, not directly. Three likely causes:
 
-1. **Missing trailing slash.** FastMCP redirects `/mcp` → `/mcp/` and the streamable-http client doesn't follow POST redirects. Always end the URL in `/mcp/`.
-
-2. **Wrong port.** The MCP Service is now on port 80 by default (`deploy/mcp/values.yaml`). If a stored release still has `mcp.url=http://mcp...:8000/mcp/` and you changed the Service to 80, callers fail. Fix:
+1. **`403 Forbidden`.** No access grant, or it doesn't cover the tool being called. New `MCPServer` resources deny everything until granted:
    ```bash
-   helm upgrade agent deploy/agent -n bank-heist --reuse-values \
-     --set mcp.url=http://mcp.bank-heist.svc.cluster.local/mcp/ \
-     --set mcp.httpBase=http://mcp.bank-heist.svc.cluster.local
+   diagrid mcpserver access get bank-postgres-mcp --project resiliency-demo
+   diagrid mcpserver access grant bank-postgres-mcp --project resiliency-demo \
+     --caller bank-agent-creditor \
+     --allow-tools get_balance,credit_account,get_next_task,report_done --wait
+   ```
+
+2. **`upstream HTTP 405`.** Catalyst's proxy relays the caller's actual request to the registered upstream URL with the trailing slash stripped (its own health ping keeps the slash). FastMCP's `/mcp` Mount only gives Starlette a partial match for the bare path, so it falls through to the `/` static-files catch-all, which rejects POST. Fixed by `_MCPTrailingSlashMiddleware` in `services/mcp/mcp_server/server.py` — confirm it's present and deployed (`kubectl -n bank-creditor logs deploy/mcp | grep 405` should show nothing new after a fresh rollout).
+
+3. **`MCP_SERVER_NAME` mismatch.** The agent's env var must match the registered `MCPServer` resource's name exactly (`diagrid mcpserver list --project resiliency-demo`). Check with:
+   ```bash
+   kubectl -n bank-creditor get deploy agent -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="MCP_SERVER_NAME")].value}'
    ```
 
 ## New image pushed but pods still on the old code
@@ -141,22 +147,21 @@ Two likely causes:
 `imagePullPolicy: IfNotPresent` (Kubernetes default) plus the same image tag means the node uses its cached image regardless of what's now in the registry. The MCP/agent charts set `pullPolicy: Always` by default — verify:
 
 ```bash
-kubectl -n bank-heist get deploy mcp -o yaml | grep -A1 imagePullPolicy
+kubectl -n bank-creditor get deploy mcp -o yaml | grep -A1 imagePullPolicy
 ```
 
 If it's `IfNotPresent`, fix:
 
 ```bash
-kubectl -n bank-heist patch deployment mcp -p \
+kubectl -n bank-creditor patch deployment mcp -p \
   '{"spec":{"template":{"spec":{"containers":[{"name":"mcp","imagePullPolicy":"Always"}]}}}}'
-kubectl -n bank-heist rollout restart deployment/mcp
+kubectl -n bank-creditor rollout restart deployment/mcp
 ```
 
 ## Throughput notes by deploy mode
 
 - **Catalyst Self-Hosted** (data plane in your cluster): no per-app RPS limit, intra-cluster latency. The default `target_concurrency` of 100 works fine.
-- **Local Dapr** (sidecar in-pod): fastest path; activities never leave the pod.
-- **Local Catalyst** (`diagrid dev run`): all traffic tunnels through the dev proxy; expect slower throughput than Self-Hosted but the durability story is identical.
+- **Local Catalyst** (`diagrid dev run`): all traffic tunnels through the dev proxy, including MCP tool calls; expect slower throughput than Self-Hosted but the durability story is identical.
 
 The durability story (the actual point of the demo) works at any throughput.
 
@@ -165,9 +170,9 @@ The durability story (the actual point of the demo) works at any throughput.
 `kubectl set env … VAR-` (trailing dash) removes the var from the deployment spec, but if pods were already running with it set, you still need a `rollout restart` for the new spec to take effect:
 
 ```bash
-kubectl -n bank-heist set env deployment/agent FORCE_WORKFLOW_NAME-
-kubectl -n bank-heist rollout restart deployment/agent
-kubectl -n bank-heist exec deploy/agent -c agent -- printenv | grep FORCE_WORKFLOW_NAME
+kubectl -n bank-creditor set env deployment/agent FORCE_WORKFLOW_NAME-
+kubectl -n bank-creditor rollout restart deployment/agent
+kubectl -n bank-creditor exec deploy/agent -c agent -- printenv | grep FORCE_WORKFLOW_NAME
 # Should print nothing.
 ```
 

@@ -1,4 +1,4 @@
-"""In-memory work queue for the bank-heist demo.
+"""In-memory work queue for the bank-creditor demo.
 
 Generates `customers * credits_per_customer` tasks (default 10 * 100 = 1000),
 hands them out one at a time via `next_task`, and tracks completion via

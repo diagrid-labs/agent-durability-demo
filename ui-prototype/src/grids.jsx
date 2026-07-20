@@ -29,8 +29,7 @@ function AgentsGrid({ state }) {
     <div className="card" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
       <div className="card-h">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span className="label-md" style={{ color: 'var(--fg)' }}>Agent Workflows</span>
-          <span className="pill gray">{agents.length} workflows</span>
+          <span className="label-md" style={{ color: 'var(--fg)' }}>Agents</span>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
           {counts.idle > 0 && <Legend color="var(--fg-3)" label={`idle ${counts.idle}`} />}
@@ -59,18 +58,19 @@ function AgentsGrid({ state }) {
               title={`${a.label} · ${a.status} · ${a.txCount} tx`}
               style={{
                 background: bg, border: `1px solid ${bd}`, borderRadius: 6,
-                padding: '7px 9px',
+                padding: '6px 7px',
                 display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
                 minWidth: 0, minHeight: 0,
+                overflow: 'hidden',
                 position: 'relative',
               }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                <span className="dot" style={{ background: dot, width: 7, height: 7 }} />
-                <span className="mono" style={{ fontSize: 11, color: 'var(--fg-2)', fontWeight: 500, letterSpacing: '-0.01em' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+                <span className="dot" style={{ background: dot, width: 7, height: 7, flexShrink: 0 }} />
+                <span className="mono" style={{ fontSize: 10, color: 'var(--fg-2)', fontWeight: 500, letterSpacing: '-0.01em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {String(a.id+1).padStart(3,'0')}
                 </span>
               </div>
-              <span className="mono" style={{ fontSize: 14, color: fg, fontWeight: 600, textAlign: 'right', letterSpacing: '-0.02em', lineHeight: 1 }}>
+              <span className="mono" style={{ fontSize: 12, color: fg, fontWeight: 600, textAlign: 'right', letterSpacing: '-0.02em', lineHeight: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {a.txCount}
               </span>
             </div>
@@ -111,9 +111,9 @@ function CustomersGrid({ state }) {
       <div style={{
         flex: 1, padding: '10px 14px', minHeight: 0, overflow: 'hidden',
         display: 'grid',
-        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-        gridTemplateRows: 'repeat(5, minmax(0, 1fr))',
-        gap: 8,
+        gridTemplateColumns: 'minmax(0, 1fr)',
+        gridTemplateRows: 'repeat(10, minmax(0, 1fr))',
+        gap: 6,
       }}>
         {customers.map(c => <CustomerRow key={c.id} c={c} />)}
       </div>
@@ -125,7 +125,6 @@ function CustomerRow({ c }) {
   const pct = Math.min(1, Math.max(0, (c.balance - START_BAL) / (TARGET_BAL - START_BAL)));
   const done = c.balance >= TARGET_BAL;
   const recent = c.lastTxAt && (performance.now() - c.lastTxAt < 500);
-  const acctNum = `BNK-${String(c.id+1).padStart(4,'0')}-7741`;
   const initial = (c.name || '?').charAt(0);
 
   const cardBg = done ? 'var(--green-soft)' : (recent ? 'var(--accent-soft)' : 'var(--surface)');
@@ -135,73 +134,61 @@ function CustomerRow({ c }) {
 
   return (
     <div style={{
-      display: 'grid',
-      gridTemplateColumns: '32px minmax(0, 1fr)',
-      gridTemplateRows: 'auto auto auto',
-      columnGap: 12,
-      rowGap: 8,
-      padding: '12px 14px',
+      display: 'flex', alignItems: 'center', gap: 10,
+      padding: '6px 12px',
       background: cardBg,
       border: `1px solid ${cardBd}`,
       borderRadius: 8,
-      minHeight: 0,
+      minWidth: 0, minHeight: 0,
       boxShadow: recent && !done ? '0 0 0 3px var(--accent-soft)' : 'none',
       transition: 'background 360ms ease, border-color 240ms ease, box-shadow 240ms ease',
     }}>
-      {/* Row 1: avatar + name */}
+      {/* Avatar */}
       <div style={{
-        width: 32, height: 32, borderRadius: '50%',
+        width: 26, height: 26, borderRadius: '50%',
         background: accent,
-        color: '#fff', fontWeight: 600, fontSize: 13,
+        color: '#fff', fontWeight: 600, fontSize: 12,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         letterSpacing: '-0.01em',
         transition: 'background 360ms ease',
         flexShrink: 0,
-        gridRow: '1 / 2', gridColumn: '1 / 2',
       }}>
         {initial}
       </div>
-      <div style={{ gridRow: '1 / 2', gridColumn: '2 / 3', display: 'flex', alignItems: 'center', minWidth: 0 }}>
+
+      {/* Name + progress bar, full remaining width */}
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
         <span style={{
-          fontSize: 14, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.01em',
+          fontSize: 13, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.01em',
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}>
           {c.name}
         </span>
+        <div style={{ height: 4, background: '#eef0f3', borderRadius: 2, overflow: 'hidden' }}>
+          <div style={{
+            height: '100%',
+            width: `${(pct*100).toFixed(1)}%`,
+            background: accent,
+            transition: 'width 240ms ease, background 360ms ease',
+          }} />
+        </div>
       </div>
 
-      {/* Row 2: balance under name */}
-      <div style={{
-        gridRow: '2 / 3', gridColumn: '1 / 3',
-        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8,
-      }}>
-        <span className="mono" style={{
-          fontSize: 22, fontWeight: 600, letterSpacing: '-0.025em',
-          color: balColor,
-          lineHeight: 1.05,
+      {/* Balance, right-aligned */}
+      <div style={{ flexShrink: 0, textAlign: 'right' }}>
+        <div className="mono" style={{
+          fontSize: 15, fontWeight: 600, letterSpacing: '-0.02em',
+          color: balColor, lineHeight: 1.2,
           transition: 'color 360ms ease',
         }}>
           {fmtMoney(c.balance)}
-        </span>
-        <span className="mono" style={{
-          fontSize: 10, color: done ? 'var(--green)' : 'var(--fg-3)', fontWeight: 600,
+        </div>
+        <div className="mono" style={{
+          fontSize: 9, color: done ? 'var(--green)' : 'var(--fg-3)', fontWeight: 600,
           letterSpacing: '0.04em', textTransform: 'uppercase',
         }}>
           {done ? '✓ target' : `${(pct*100).toFixed(0)}%`}
-        </span>
-      </div>
-
-      {/* Row 3: full-width progress bar */}
-      <div style={{
-        gridRow: '3 / 4', gridColumn: '1 / 3',
-        height: 6, background: '#eef0f3', borderRadius: 3, overflow: 'hidden',
-      }}>
-        <div style={{
-          height: '100%',
-          width: `${(pct*100).toFixed(1)}%`,
-          background: accent,
-          transition: 'width 240ms ease, background 360ms ease',
-        }} />
+        </div>
       </div>
     </div>
   );

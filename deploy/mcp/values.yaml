@@ -1,5 +1,5 @@
 image:
-  repository: tezizzm/bank-heist-mcp
+  repository: alicejgibbons/bank-creditor-mcp
   tag: "0.1.0"
   # Always-pull so demo iteration on the same tag picks up freshly pushed
   # images without bumping the tag. Switch to IfNotPresent for production.
@@ -29,7 +29,7 @@ service:
 
 # Connection to the Postgres chart's Service.
 postgres:
-  host: postgres.bank-heist.svc.cluster.local
+  host: postgres.bank-creditor.svc.cluster.local
   port: 5432
   database: bankdemo
   credentialsSecret: postgres-credentials
@@ -38,7 +38,7 @@ postgres:
 # In-cluster URL of the agent Service — used by `/agent/*` proxy routes so the
 # UI (served same-origin from this Pod) can drive the agent worker without CORS.
 agent:
-  httpBase: http://agent.bank-heist.svc.cluster.local:8000
+  httpBase: http://agent.bank-creditor.svc.cluster.local:8000
 
 logLevel: INFO
 
@@ -52,7 +52,7 @@ resources:
 
 # Control nodepool — never a chaos target.
 nodeSelector:
-  bank-heist.role: platform
+  bank-creditor.role: platform
 
 tolerations: []
 
@@ -64,10 +64,3 @@ rbac:
 
 podChaos:
   labelSelector: "app.kubernetes.io/name=agent"
-
-# Validates Catalyst service-invocation calls on /dapr/* routes.
-# Token must match the bank-mcp-server "Application token" set in Catalyst.
-catalyst:
-  enabled: false
-  appTokenSecret: catalyst-mcp-server
-  appTokenSecretKey: DAPR_APP_TOKEN

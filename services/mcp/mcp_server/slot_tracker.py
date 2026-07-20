@@ -1,6 +1,6 @@
 """Live slot ↔ pod mapping.
 
-Each agent pod stamps its hostname on `process_task` calls; this module records
+Each agent pod stamps its hostname on `get_next_task` calls; this module records
 which pod most recently serviced each heatmap slot. The UI uses it to render
 "Kill 1 pod (~N agents)" labels keyed to actual current ownership, and the
 pod-kill chaos broadcasts a `slot-state="dead"` WS frame for exactly the slots

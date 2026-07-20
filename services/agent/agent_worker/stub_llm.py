@@ -1,4 +1,4 @@
-"""Deterministic LLM stub for the orchestrator-driven Bank Heist demo.
+"""Deterministic LLM stub for the orchestrator-driven Bank Creditor demo.
 
 State machine, no instance state — entirely a function of the chat history.
 Per-task flow:
@@ -57,26 +57,7 @@ class StubLLM(ChatClientBase):
 
         last_tool_name, last_tool_content = self._last_tool_message(msg_list)
         requester = self._requester_from_messages(msg_list)
-        mode = self._mode_from_messages(msg_list)
 
-        # Single-tool mode: one ProcessTask call, then stop.
-        if mode == "single":
-            if last_tool_name is None:
-                # Pod hostname forwarded so MCP can map slot→pod for pod-kill
-                # chaos visualization. Empty string outside k8s is fine.
-                import os as _os
-                return self._tool_call(
-                    "ProcessTask",
-                    {"requester": requester, "pod": _os.environ.get("HOSTNAME", "")},
-                )
-            if last_tool_name == "ProcessTask":
-                resp = self._parse_json(last_tool_content) or {}
-                if resp.get("done"):
-                    return self._content("no work remaining")
-                return self._content("task complete")
-            return self._content("done")
-
-        # Multi-tool mode (default): the original 4-step state machine.
         if last_tool_name is None:
             return self._tool_call("GetNextTask", {"requester": requester})
 
@@ -142,26 +123,6 @@ class StubLLM(ChatClientBase):
             else:
                 out.append({"role": "user", "content": str(m)})
         return out
-
-    @staticmethod
-    def _mode_from_messages(messages: list[dict[str, Any]]) -> str:
-        """Pull `mode=<multi|single>` out of the first user message. Defaults
-        to 'multi' so existing prompts behave as before."""
-        for msg in messages:
-            if str(msg.get("role", "")).lower() != "user":
-                continue
-            content = msg.get("content", "")
-            if isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        content = block.get("text", "")
-                        break
-            if not isinstance(content, str):
-                content = str(content)
-            m = re.search(r"mode=(multi|single)", content)
-            if m:
-                return m.group(1)
-        return "multi"
 
     @staticmethod
     def _requester_from_messages(messages: list[dict[str, Any]]) -> str:

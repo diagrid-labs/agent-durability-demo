@@ -1,9 +1,8 @@
-# Bank Heist on Catalyst — Local Mode
+# Bank Creditor on Catalyst — Local Mode
 
-Run the dapr-agents Bank Heist demo on your laptop with the agent's Dapr APIs proxied through **Diagrid Catalyst**. Workflow runtime, state store, and placement run in Catalyst; the agent process, MCP server, and bank Postgres run locally.
+Run the dapr-agents Bank Creditor demo on your laptop with the agent's Dapr APIs proxied through **Diagrid Catalyst**. Workflow runtime, state store, and placement run in Catalyst; the agent process, MCP server, and bank Postgres run locally.
 
-> For a k8s deploy that uses Catalyst Self-Hosted (no local `diagrid dev run`), see [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md).
-> For the same k8s deploy with upstream Dapr instead of Catalyst, see the [main README](./README.md#deploying-to-kubernetes).
+> For a k8s deploy that uses Catalyst Self-Hosted (no local `diagrid dev run`), see [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md) — that's also the canonical walkthrough for the `diagrid mcpserver` commands referenced below, since the agent's tool calls now go through Catalyst's MCP proxy rather than a direct connection.
 
 ## Architecture
 
@@ -12,20 +11,21 @@ Run the dapr-agents Bank Heist demo on your laptop with the agent's Dapr APIs pr
 │ Catalyst project   │ ◄───────────────────────► │ agent-worker (uvicorn)  │
 │  · workflow engine │                           │  ./services/agent       │
 │  · state store     │                           │  appPort 8000           │
-│  · placement       │                           │  daprHTTPPort 3500      │
-└────────────────────┘                           └────────────┬────────────┘
-                                                              │ MCP / streamable-http
-                                                              ▼
-                                                 ┌─────────────────────────┐
-                                                 │ mcp (docker)            │
-                                                 │  localhost:9000/mcp/    │
-                                                 └────────────┬────────────┘
-                                                              │ asyncpg
-                                                              ▼
-                                                 ┌─────────────────────────┐
-                                                 │ postgres (docker)       │
-                                                 │  localhost:5432         │
-                                                 └─────────────────────────┘
+│  · MCP proxy        │──┐                        │  daprHTTPPort 3500      │
+└────────────────────┘  │ /v1.0/diagrid/mcp/...   └────────────┬────────────┘
+                         │                                     │ (tool calls route
+                         ▼                                     │  through the MCP
+              ┌─────────────────────────┐                      │  proxy, left)
+              │ mcp — must be reachable │◄─────────────────────┘
+              │ FROM Catalyst, not just │
+              │ from this laptop        │
+              └────────────┬────────────┘
+                            │ asyncpg
+                            ▼
+              ┌─────────────────────────┐
+              │ postgres (docker)       │
+              │  localhost:5432         │
+              └─────────────────────────┘
 ```
 
 ## Prerequisites
@@ -41,7 +41,7 @@ dapr-agents needs both managed workflow **and** agent infrastructure (managed co
 
 ```bash
 diagrid login
-diagrid project create bank-heist-local \
+diagrid project create bank-creditor-local \
   -r diagrid-aws-eu-west \
   --enable-managed-workflow \
   --enable-agent-infrastructure \
@@ -57,7 +57,7 @@ diagrid appid create agent-worker --wait
 `--enable-agent-infrastructure` auto-provisions a managed state store named `agent-memory`. Reuse that for the workflow state store — no extra `diagrid kv create` needed. Verify:
 
 ```bash
-diagrid project get bank-heist-local   # ManagedWorkflowStore: enabled (+ agent infra)
+diagrid project get bank-creditor-local   # ManagedWorkflowStore: enabled (+ agent infra)
 diagrid component list                 # agent-memory state.diagrid all app identities ready
 ```
 
@@ -78,6 +78,25 @@ docker compose -f local/compose.yaml ps
 curl -s http://localhost:9000/healthz   # → {"status":"ok"}
 ```
 
+### Register the MCP server with Catalyst
+
+The agent's tool calls (`get_balance`, `credit_account`, `get_next_task`, `report_done`) go through Catalyst's managed MCP proxy — Catalyst has to be able to reach the MCP server's URL itself, not just your laptop.
+
+```bash
+diagrid mcpserver create bank-postgres-mcp \
+  --project bank-creditor-local \
+  --url http://localhost:9000/mcp/ \
+  --wait
+
+diagrid mcpserver access grant bank-postgres-mcp \
+  --project bank-creditor-local \
+  --caller agent-worker \
+  --allow-tools get_balance,credit_account,get_next_task,report_done \
+  --wait
+```
+
+**Known gap, not yet verified**: with Catalyst Cloud (this section's `bank-creditor-local` project), `localhost:9000` is only reachable from *this laptop* — `diagrid dev run`'s tunnel exposes the agent's port outward, but doesn't expose the MCP server's port inward-to-Catalyst. If registration or tool calls fail with a connect error, you likely need to tunnel the MCP server too (e.g. `ngrok http 9000` and register that URL instead), or point this registration at an already-reachable MCP endpoint (like the one from [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md), if you have one). This was validated end-to-end for the Self-Hosted / in-cluster case, not for Catalyst Cloud + a laptop-only MCP server.
+
 ## 3. Install agent dependencies
 
 The agent runs as a normal Python process (not in docker) so `diagrid dev run` can attach the daprd tunnel to it.
@@ -93,7 +112,7 @@ cd -
 From the repo root:
 
 ```bash
-diagrid dev run --file dapr.yaml --project bank-heist-local \
+diagrid dev run --file dapr.yaml --project bank-creditor-local \
   --skip-managed-kv --skip-managed-pubsub --skip-default-resiliency
 ```
 
@@ -109,7 +128,7 @@ export FORCE_WORKFLOW_NAME=agent_workflow
 If you forget this, scheduled workflows will fail with `OrchestratorNotRegisteredError`.
 
 This will:
-1. Authenticate against your `bank-heist` project.
+1. Authenticate against your `bank-creditor` project.
 2. Open a dev tunnel from Catalyst back to `localhost:8000`.
 3. Spawn `uvicorn agent_worker.main:app` and a local daprd that proxies all Dapr API calls to Catalyst.
 
@@ -148,15 +167,15 @@ docker compose -f local/compose.yaml down -v
 To delete the Catalyst project entirely:
 
 ```bash
-diagrid project delete bank-heist-local
+diagrid project delete bank-creditor-local
 ```
 
 > Re-provisioning is the only way to add `--enable-agent-infrastructure` to a project — there's no `project update` for it.
 
 ## Notes & gotchas
 
-- **`max_iterations=300`** in `services/agent/agent_worker/agent.py` caps the stub agent at ~150 credits per workflow (it alternates `get_balance` / `credit_account` in multi-mode). The default single-mode `process_task` path only takes one iteration per task so this rarely matters now.
+- **`max_iterations=10`** in `services/agent/agent_worker/agent.py` caps the stub agent's tool-call loop per workflow (it alternates `get_next_task` / `get_balance` / `credit_account` / `report_done`, one credit per workflow instance).
 - **Real LLM mode** (`STUB_LLM=false`, with `OPENAI_API_KEY` set in `dapr.yaml`'s `env:`) only works with a model that emits OpenAI-compatible structured tool calls.
-- **`MCP_URL` must end in a trailing slash** (`/mcp/`). FastMCP redirects `/mcp` → `/mcp/`, and the streamable-http client doesn't follow POST redirects.
+- **Tool calls fail with `403 Forbidden`** — no MCP access grant yet for `agent-worker`, or it's missing one of the four tools. Re-run the `diagrid mcpserver access grant` command in step 2.
 - **Workflow name** is the most common stumbling block — see [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#orchestratornotregistererror-a-x-orchestrator-was-not-registered).
 - **Postgres data persists** across `docker compose down` unless `-v` is passed. The `transactions` table accumulates across runs — clear with `TRUNCATE transactions, execution_runs RESTART IDENTITY CASCADE` if you want a clean count, or just hit Reset in the UI which starts a fresh `execution_run`.

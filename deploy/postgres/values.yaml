@@ -30,7 +30,7 @@ resources:
 # Pin to the control nodepool so chaos targeting the agents pool never
 # accidentally clips the source of truth.
 nodeSelector:
-  bank-heist.role: platform
+  bank-creditor.role: platform
 
 tolerations: []
 

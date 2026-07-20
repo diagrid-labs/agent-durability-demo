@@ -1,4 +1,4 @@
-# Bank Heist Demo
+# Bank Creditor Demo
 
 Diagrid sales demo: 100 Dapr durable workflows credit 10 customer accounts $100 → $200 ($1 per tx) while chaos is injected. Invariant: every account finishes at $200, tx count = 1000, zero loss. **Sales demo, not production code.** Bar is "UI works cleanly on stage."
 
@@ -26,7 +26,7 @@ services/agent/agent_worker/  Dapr workflow worker
   main.py                     FastAPI + WorkflowRuntime; /schedule-one is hot path
   agent.py                    DurableAgent ("banker") + tool defs
   stub_llm.py                 deterministic stub for STUB_LLM=true
-  mcp_client.py               MCP streamable-http client
+  mcp_client.py               MCP client — calls tools through Catalyst's MCP proxy, not the mcp Service directly
 
 deploy/                       Helm charts: agent, mcp, postgres, ingress
 local/                        compose.yaml + init.sql for laptop-only loop
@@ -58,13 +58,11 @@ The actual fix path is the dapr-agents framework endpoint at `/agent/instances/{
 
 **Catalyst has a per-app-id RPS rate limit.** The replenisher bursts up to ~200 schedule calls/sec and running workflows do `GetState`/`PutState` on top. Manifestations: `RESOURCE_EXHAUSTED ... grpc_ratelimit middleware` (explicit) or `UNAVAILABLE: Socket closed` (LB drops). Throttled via `SCHEDULE_THROTTLE_MS` env on MCP (default 50ms ≈ 20 schedules/sec). Lower `target_concurrency` if you still see drops at scale.
 
-**`MCP_URL` must use the Service port, not the container port.** Service runs on port 80, container listens on 8000. `MCP_URL=http://mcp.bank-heist.svc.cluster.local:8000/mcp/` (with explicit `:8000`) → silent `ConnectTimeout` on every call because nothing listens on the Service at port 8000. Correct: `http://mcp.bank-heist.svc.cluster.local/mcp/` (port-less). Easy to get wrong via stale `--set mcp.url=…` overrides from local-compose where the host-mapped port WAS 8000/9000.
+**The agent no longer calls the `mcp` Service directly — everything routes through Catalyst's MCP proxy.** `mcp_client.py` talks to `$DAPR_HTTP_ENDPOINT/v1.0/diagrid/mcp/$MCP_SERVER_NAME` (the `mcp` Service is registered as a Catalyst `MCPServer` resource; see `CATALYST_SELF_HOSTED.md` step 8). New MCP servers deny every tool until granted — `403 Forbidden` almost always means the access grant is missing or stale, not a network problem. See `CATALYST_SELF_HOSTED.md`'s "Common failure modes" for the `405`-from-trailing-slash-stripping gotcha this uncovered in FastMCP's `/mcp` mount, fixed by `_MCPTrailingSlashMiddleware` in `server.py`.
 
-**Workflow name is registered lowercase, not PascalCase.** dapr-agents 1.x registers as `dapr.agents.<name-lower>.workflow` (e.g. `dapr.agents.banker.workflow`), matching the activity naming. The PascalCase name `dapr.agents.Banker.workflow` will be silently rejected by Catalyst with "orchestrator was not registered" and the workflow FAILs in <1s. The `schedule_one` / `trigger` / `_schedule_one` defaults in `main.py` now use lowercase; override via `FORCE_WORKFLOW_NAME` env if the agent's `name=` kwarg changes.
+**Workflow name is registered lowercase, not PascalCase.** dapr-agents 1.x registers as `dapr.agents.<name-lower>.workflow` (e.g. `dapr.agents.banker.workflow`), matching the activity naming. The PascalCase name `dapr.agents.Banker.workflow` will be silently rejected by Catalyst with "orchestrator was not registered" and the workflow FAILs in <1s. The `schedule_one` / `trigger` defaults in `main.py` (and `_schedule_one` in the MCP-side `replenisher.py`) now use lowercase; override via `FORCE_WORKFLOW_NAME` env if the agent's `name=` kwarg changes.
 
-**`mcp_queries` undercounts in `single` mode.** The `log_mcp("req"/"res")` calls live inside the per-tool wrappers (`list_customers`, `credit_account`) — not inside `process_task` (the atomic single-mode tool). So when running in `single` mode, the MCP-server card and `mcp_queries` counter look empty even though credits are landing in Postgres. Add `log_mcp` calls inside `process_task` if you need that visibility.
-
-**The replenisher lives on the MCP server, not the agent.** `services/agent/agent_worker/main.py` still has legacy `/spawn-agents` + `_replenish_loop` code that's NOT the active path — ignore it when debugging. The live path is `Replenisher` in `services/mcp/mcp_server/replenisher.py` calling agent's `/schedule-one` (stateless, line ~100 of `main.py`).
+**The replenisher lives on the MCP server, not the agent.** `Replenisher` in `services/mcp/mcp_server/replenisher.py` owns the loop and calls agent's `/schedule-one` (stateless, line ~100 of `main.py`). An earlier in-agent replenisher (`/spawn-agents` + `_replenish_loop` in `main.py`) was removed as dead code — if you see references to it in old notes or diffs, they predate the cleanup.
 
 **Pre-bank-agent-creditor workflows registered as `agent_workflow` are zombies.** Old runs under the previous app-id are stuck with a different workflow name than current workers register, so they won't be picked up. They live in the auto-provisioned `agent-workflow` state component, which is *managed* — `diagrid component delete` rejects with "managed diagrid components cannot be deleted directly." Cleanup paths: **(a)** wipe the state store directly via the **Catalyst Console UI** (Components → agent-workflow → clear/reset — works even when the CLI refuses), **(b)** delete + recreate the app-id, or **(c)** recreate the whole Catalyst project.
 

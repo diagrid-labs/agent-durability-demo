@@ -1,4 +1,4 @@
-"""DurableAgent setup for the Bank Heist demo (dapr-agents 1.0.1)."""
+"""DurableAgent setup for the Bank Creditor demo (dapr-agents 1.0.1)."""
 
 import os
 from typing import Any
@@ -68,20 +68,6 @@ async def report_done(tx_id: str, applied: bool) -> dict[str, Any]:
     return await call_tool("report_done", {"tx_id": tx_id, "applied": applied})
 
 
-@tool
-async def process_task(requester: str) -> dict[str, Any]:
-    """Atomic single-call alternative to GetNextTask + GetBalance +
-    CreditAccount + ReportDone. Pass your workflow identity as `requester`.
-
-    Also forwards the pod's hostname so the MCP server can track which agent
-    pod is currently servicing which heatmap slot — used to drive accurate
-    pod-kill chaos visualization."""
-    return await call_tool(
-        "process_task",
-        {"requester": requester, "pod": os.environ.get("HOSTNAME", "")},
-    )
-
-
 class _SilentFormatter:
     """No-op replacement for dapr-agents' ColorTextFormatter.
 
@@ -134,7 +120,7 @@ def build_agent() -> DurableAgent:
         ),
         state=AgentStateConfig(store=state_store),
         execution=AgentExecutionConfig(max_iterations=10),
-        tools=[get_balance, credit_account, get_next_task, report_done, process_task],
+        tools=[get_balance, credit_account, get_next_task, report_done],
         llm=_build_llm(),
     )
     # Replace the colored stdout printer; under high concurrency its writes

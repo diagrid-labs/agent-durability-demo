@@ -1,4 +1,4 @@
-/* Bank Heist Demo (Simple) — Catalyst-docs light mode */
+/* Bank Creditor Demo (Simple) — Catalyst-docs light mode */
 :root {
   /* Surfaces */
   --bg: #ffffff;
@@ -47,7 +47,7 @@ html, body {
   line-height: 1.5;
   overflow: hidden;
 }
-#root { height: 100vh; width: 100vw; }
+#root { height: 100vh; width: 100%; }
 
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 

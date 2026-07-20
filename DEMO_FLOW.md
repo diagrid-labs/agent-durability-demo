@@ -1,11 +1,11 @@
-# Bank Heist Demo Flow
+# Bank Creditor Demo Flow
 
 A ~10-minute walkthrough. Opens in the Catalyst App Graph, drills through the agent into a workflow, then shows the live UI with chaos. Closes by returning to Catalyst to show workflow recovery, and back to the UI to land the invariant.
 
 ## 0. Pre-flight (before stage)
 
 - [ ] Browser tab: Catalyst Console, `resiliency-demo` project, on the **App graph** tab
-- [ ] Browser tab: the Bank Heist UI (LoadBalancer IP, port 80)
+- [ ] Browser tab: the Bank Creditor UI (LoadBalancer IP, port 80)
 - [ ] Click **Reset** in the UI so balances are at $100 and Operations History is empty
 - [ ] If prior workflows clutter the Catalyst Workflows list, purge them so a new run is easy to spot
 
@@ -14,7 +14,7 @@ A ~10-minute walkthrough. Opens in the Catalyst App Graph, drills through the ag
 **Screen:** App Graph for `resiliency-demo`
 
 **Pitch:**
-> "Here's the application we're going to look at. Two services: an AI agent on the left, `bank-agent-creditor`, and an MCP server on the right, `bank-mcp-server`. The arrow shows the agent calling the MCP server. That's the whole architecture — an agent that uses tools exposed by an MCP server."
+> "Here's the application we're going to look at. Two services: an AI agent on the left, `bank-agent-creditor`, and its Postgres-backed MCP server on the right, `bank-postgres-mcp`. The arrow shows the agent calling the MCP server — but that call goes through Catalyst's managed MCP proxy, not a direct connection. Catalyst governs exactly which tools this agent is allowed to call. That's the whole architecture — an agent using tools exposed by an MCP server, with Catalyst controlling access to both the workflow and the tool surface."
 
 Quick beat, then move to Agents.
 
@@ -54,9 +54,9 @@ Quick beat, then move to Agents.
 
 > "Now let's see this happen live at scale."
 
-## 4. The Bank Heist UI — "what we're about to run"
+## 4. The Bank Creditor UI — "what we're about to run"
 
-**Screen:** the Bank Heist UI
+**Screen:** the Bank Creditor UI
 
 **Walk through the panels before clicking Start.**
 
@@ -130,7 +130,7 @@ Hover the buttons to show tooltips:
 
 ## 8. Close — "the invariant"
 
-**Screen:** back to the Bank Heist UI
+**Screen:** back to the Bank Creditor UI
 
 **Pitch:**
 > "And here's the proof. Every customer has reached $200. 1000 transactions processed, zero lost. Despite pod failures, an availability zone outage, latency spikes, and explicit error injection — the system is correct."

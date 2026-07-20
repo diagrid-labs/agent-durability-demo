@@ -1,7 +1,7 @@
 [project]
-name = "bank-heist-mcp-server"
+name = "bank-creditor-mcp-server"
 version = "0.1.0"
-description = "MCP server fronting Postgres for the Bank Heist demo"
+description = "MCP server fronting Postgres for the Bank Creditor demo"
 requires-python = ">=3.11"
 dependencies = [
   "mcp>=1.2.0",
