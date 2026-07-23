@@ -22,9 +22,9 @@ services/mcp/mcp_server/      FastAPI host (port 8000 → host 9000)
   db.py                       asyncpg pool, accounts/transactions/execution_runs
   chaos.py                    drop/latency injection inside MCP tools
 
-services/agent/agent_worker/  Dapr workflow worker
-  main.py                     FastAPI + WorkflowRuntime; /schedule-one is hot path
-  agent.py                    DurableAgent ("banker") + tool defs
+services/agent/agent_worker/  Dapr workflow worker (LangGraph via diagrid.agent.langgraph)
+  main.py                     FastAPI + DaprWorkflowGraphRunner; /schedule-one is hot path
+  agent.py                    LangGraph StateGraph ("banker") + DaprWorkflowGraphRunner + tool defs
   stub_llm.py                 deterministic stub for STUB_LLM=true
   mcp_client.py               MCP client — calls tools through Catalyst's MCP proxy, not the mcp Service directly
 
@@ -38,29 +38,33 @@ local/                        compose.yaml + init.sql for laptop-only loop
 UI Start ─POST→ MCP /agent/spawn ─→ Replenisher.start
                                     └→ orch.reset() — fills 1000-task queue
                                     └→ loop: for slot in N: POST agent /schedule-one
-                                                           └→ DaprWorkflowClient.schedule_new_workflow
+                                                           └→ DaprWorkflowGraphRunner.run_async(workflow_id=instance_id)
                                                                   → Catalyst workflow engine
-                                                                       → durable activities call MCP tools
+                                                                       → durable activities execute LangGraph nodes, call MCP tools
                                                                             → Postgres credit_account (idempotent)
 ```
 
 ## Bring-up (canonical)
 
-Production (any K8s + Catalyst Self-Hosted): Helm charts in `deploy/`, see `CATALYST_SELF_HOSTED.md`.
-Local: `docker compose -f local/compose.yaml up -d --build` + `diagrid dev run --file dapr.yaml --project <p>` per `CATALYST.md`.
+Production (any K8s + Catalyst Self-Hosted): Helm charts in `deploy/`, see `docs/CATALYST_SELF_HOSTED.md`.
+Local: `docker compose -f local/compose.yaml up -d --build` + `diagrid dev run --file dapr.yaml --project <p>` per `docs/CATALYST.md`.
 UI: `http://<host>/index.html` (or `localhost:9000` locally — same origin, no CORS).
 
 ## Critical gotchas (read before debugging)
 
-**`diagrid workflow terminate/pause/purge` are silently no-op for `DurableAgent` workflows — but the framework's own endpoints work.** The CLI hits Catalyst's management API which marks the workflow terminated in Catalyst's metadata but doesn't propagate the signal to the underlying durabletask runtime. The workflow runs to natural completion and the COMPLETED state overwrites the TERMINATED marker. Symptom: CLI returns `Status: success`, but `diagrid workflow get` later shows `status: completed` with a full natural execution history.
+**`diagrid workflow terminate/pause/purge` are silently no-op for these workflows — but `main.py`'s own endpoints work.** The CLI hits Catalyst's management API which marks the workflow terminated in Catalyst's metadata but doesn't propagate the signal to the underlying durabletask runtime. The workflow runs to natural completion and the COMPLETED state overwrites the TERMINATED marker. Symptom: CLI returns `Status: success`, but `diagrid workflow get` later shows `status: completed` with a full natural execution history.
 
-The actual fix path is the dapr-agents framework endpoint at `/agent/instances/{instance_id}/terminate` (and `/purge`), added in [dapr/dapr-agents#438](https://github.com/dapr/dapr-agents/pull/438) and live in dapr-agents ≥ 1.0.0. It calls `DaprWorkflowClient.terminate_workflow()` over gRPC directly to the durabletask runtime, which actually stops the workflow at the next activity boundary. To enable in this demo we mount it via `AgentRunner._mount_service_routes()` in `services/agent/agent_worker/main.py`. For bulk cleanup of stuck instances, wipe the `agent-workflow` state store via the Catalyst Console UI or recreate the app-id.
+The actual fix path is `/agent/instances/{instance_id}/terminate` and `/purge` in `services/agent/agent_worker/main.py`, which call `runner.terminate_workflow()` / `runner.purge_workflow()` — plain methods on `DaprWorkflowGraphRunner`'s `BaseWorkflowRunner` base (`diagrid.agent.core.workflow.runner`) that wrap `DaprWorkflowClient.terminate_workflow()`/`.purge_workflow()` over gRPC directly to the durabletask runtime, actually stopping the workflow at the next activity boundary. No framework-internal/private method needed here (earlier dapr-agents version of this demo depended on an underscored `AgentRunner._mount_service_routes()`; the LangGraph migration replaced that with these ~10 lines against a public API). For bulk cleanup of stuck instances, wipe the `agent-workflow` state store via the Catalyst Console UI or recreate the app-id.
 
 **Catalyst has a per-app-id RPS rate limit.** The replenisher bursts up to ~200 schedule calls/sec and running workflows do `GetState`/`PutState` on top. Manifestations: `RESOURCE_EXHAUSTED ... grpc_ratelimit middleware` (explicit) or `UNAVAILABLE: Socket closed` (LB drops). Throttled via `SCHEDULE_THROTTLE_MS` env on MCP (default 50ms ≈ 20 schedules/sec). Lower `target_concurrency` if you still see drops at scale.
 
-**The agent no longer calls the `mcp` Service directly — everything routes through Catalyst's MCP proxy.** `mcp_client.py` talks to `$DAPR_HTTP_ENDPOINT/v1.0/diagrid/mcp/$MCP_SERVER_NAME` (the `mcp` Service is registered as a Catalyst `MCPServer` resource; see `CATALYST_SELF_HOSTED.md` step 8). New MCP servers deny every tool until granted — `403 Forbidden` almost always means the access grant is missing or stale, not a network problem. See `CATALYST_SELF_HOSTED.md`'s "Common failure modes" for the `405`-from-trailing-slash-stripping gotcha this uncovered in FastMCP's `/mcp` mount, fixed by `_MCPTrailingSlashMiddleware` in `server.py`.
+**The agent no longer calls the `mcp` Service directly — everything routes through Catalyst's MCP proxy.** `mcp_client.py` talks to `$DAPR_HTTP_ENDPOINT/v1.0/diagrid/mcp/$MCP_SERVER_NAME` (the `mcp` Service is registered as a Catalyst `MCPServer` resource; see `docs/CATALYST_SELF_HOSTED.md` step 8). New MCP servers deny every tool until granted — `403 Forbidden` almost always means the access grant is missing or stale, not a network problem. See `docs/CATALYST_SELF_HOSTED.md`'s "Common failure modes" for the `405`-from-trailing-slash-stripping gotcha this uncovered in FastMCP's `/mcp` mount, fixed by `_MCPTrailingSlashMiddleware` in `server.py`.
 
-**Workflow name is registered lowercase, not PascalCase.** dapr-agents 1.x registers as `dapr.agents.<name-lower>.workflow` (e.g. `dapr.agents.banker.workflow`), matching the activity naming. The PascalCase name `dapr.agents.Banker.workflow` will be silently rejected by Catalyst with "orchestrator was not registered" and the workflow FAILs in <1s. The `schedule_one` / `trigger` defaults in `main.py` (and `_schedule_one` in the MCP-side `replenisher.py`) now use lowercase; override via `FORCE_WORKFLOW_NAME` env if the agent's `name=` kwarg changes.
+**Workflow name convention changed with the LangGraph migration.** `diagrid.agent.langgraph`'s `DaprWorkflowGraphRunner` registers as `dapr.<framework>.<TitleCaseName>.workflow` — for this demo, `dapr.langgraph.Banker.workflow` (`diagrid.agent.core.workflow.naming.sanitize_agent_name` TitleCases the `name="banker"` kwarg; framework segment stays lowercase). Unlike the old dapr-agents version, `main.py` never needs to know or construct this name string itself — `/schedule-one` and `/trigger` call `runner.run_async(..., workflow_id=instance_id)` directly, which schedules the correct registered workflow function internally. There's no `FORCE_WORKFLOW_NAME` env var anymore.
+
+**`diagrid.agent.langgraph`'s node registry only extracts a node's *sync* callable — `async def` graph nodes silently fail to register.** `DaprWorkflowGraphRunner._register_graph_components()` (as of `diagrid[langgraph]==0.4.2`) pulls `node_spec.bound.func` to find each node's callable; for an `async def` node, LangGraph's `RunnableCallable.func` is `None` (the coroutine function lives at `.afunc` instead), so registration silently no-ops and logs `Could not extract callable for node: <name>` — the workflow then fails at that node with "not found in registry". Fix: register plain `def` node functions that return the (unawaited) coroutine from an inner `async def` implementation, e.g. `def call_tools(state): return _call_tools_impl(state)`. This keeps LangGraph's sync/async node-type detection on the sync path (so `.func` gets set) while still giving the Dapr activity executor a coroutine — `execute_node_activity`'s `_run_node()` already has an `asyncio.iscoroutine(result)` branch that awaits it correctly. See `services/agent/agent_worker/agent.py`.
+
+**The `concurrency.*` Helm values (`MAX_CONCURRENT_ACTIVITIES`/`MAX_CONCURRENT_ORCHESTRATIONS`/`MAX_THREAD_POOL_WORKERS`) are no longer consumed by the agent.** They were read by the old dapr-agents `main.py`, which constructed its own `WorkflowRuntime(...)` with those kwargs. `DaprWorkflowGraphRunner` builds its own internal `WorkflowRuntime(host=host, port=port)` with no concurrency knobs exposed, so these env vars are now inert (harmless, but dead). `AGENT_STATE_STORE`/`stateStore.componentName` are similarly unused now — LangGraph durability comes entirely from Dapr Workflow activity persistence, not a separate chat-memory state store.
 
 **The replenisher lives on the MCP server, not the agent.** `Replenisher` in `services/mcp/mcp_server/replenisher.py` owns the loop and calls agent's `/schedule-one` (stateless, line ~100 of `main.py`). An earlier in-agent replenisher (`/spawn-agents` + `_replenish_loop` in `main.py`) was removed as dead code — if you see references to it in old notes or diffs, they predate the cleanup.
 
@@ -96,9 +100,9 @@ Saved in `deploy/catalyst-selfhosted/port-override.yaml`. Apply with `diagrid re
 | Per-agent / per-pod state in UI | `state.run`, `state.chaos.pods` in `ui-prototype/src/telemetry.jsx` |
 | MCP tool definitions | `@mcp.tool()` decorators in `services/mcp/mcp_server/server.py` |
 | Real pod-chaos endpoints | `/chaos/pods`, `/chaos/pod-kill`, `/chaos/az-kill` → `pod_chaos.py` |
-| Catalyst bring-up + provisioning | `CATALYST_SELF_HOSTED.md`, `CATALYST.md` |
+| Catalyst bring-up + provisioning | `docs/CATALYST_SELF_HOSTED.md`, `docs/CATALYST.md` |
 | Node topology (labels, zone spread) | `deploy/agent/values.yaml:topologySpread` |
-| Common operational failures + fixes | `TROUBLESHOOTING.md` |
+| Common operational failures + fixes | `docs/TROUBLESHOOTING.md` |
 
 ## Code style for this repo
 

@@ -47,7 +47,7 @@ Quick beat, then move to Agents.
 **Pitch:**
 > "Drilling into this workflow, you see every activity the agent ran to credit that one dollar. Each row is a durable activity — Catalyst persisted the input and output before moving to the next step."
 
-**Click:** into one of the activities (e.g., `run_tool` for the credit_account call).
+**Click:** into one of the activities (e.g., `execute_node_activity` for the `tools` node — this is where the LangGraph tool call actually runs).
 
 **Pitch:**
 > "This activity is the moment the agent actually called `credit_account` on the MCP server. The input was the customer ID and dollar amount; the output was the new balance. If our pod had died between this activity and the next one, Catalyst would have replayed from here on a healthy pod — not from scratch. That's durable execution."
@@ -63,7 +63,7 @@ Quick beat, then move to Agents.
 **Customers panel (left):**
 > "Ten customers. Each one starts at $100. Our goal is to credit each one $1 at a time until they reach $200. That's 100 credits per customer, 1000 credits total."
 
-**Dapr Agents panel (center heatmap):**
+**Agents panel (center heatmap):**
 > "Each tile is a single agent workflow run. As we kick off the demo, you'll see these tiles change state — green for completed, amber for processing, others for restarting or dead. Each tile may represent many runs over the course of the demo since the orchestrator hands out work and the agent picks up a new task as soon as it finishes one."
 
 **Operating Environment panel:**
@@ -142,4 +142,4 @@ Hover the buttons to show tooltips:
 - **If a chaos button doesn't visibly affect the UI:** trigger during peak workflow activity, or wait a few seconds and try again. Latency in particular is most visible mid-run.
 - **If a workflow appears stuck in Catalyst:** that's a real talking point — durable execution holds state until it CAN recover. Pivot to "this is why this matters."
 - **If a run finishes too fast** (before chaos lands): Reset and re-Start. ~1–3 minutes per run at 100-agent concurrency.
-- **If asked about real LLM mode:** `./scripts/switch-llm-mode.sh real` between segments, then re-Start. Workflows now show real OpenAI `call_llm` activities in Catalyst — slower but the "real agent reasoning" story is more visible.
+- **If asked about real LLM mode:** `./scripts/switch-llm-mode.sh real` between segments, then re-Start. The `agent` node's `execute_node_activity` now makes a real OpenAI call under the hood — slower but the "real agent reasoning" story is more visible.

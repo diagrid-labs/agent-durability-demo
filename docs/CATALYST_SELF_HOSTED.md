@@ -161,7 +161,7 @@ helm -n bank-creditor upgrade --install agent ./deploy/agent \
   --wait
 ```
 
-The chart defaults to `stateStore.componentName: agent-memory` and `stateStore.create: false` — matches what Catalyst auto-provisions. No `--set stateStore.*` overrides needed.
+The chart defaults to `stateStore.componentName: agent-memory` and `stateStore.create: false` — matches what Catalyst auto-provisions. No `--set stateStore.*` overrides needed. (Note: since the LangGraph migration, the agent code no longer actually reads `AGENT_STATE_STORE` — durability comes entirely from Dapr Workflow activity persistence. These values are harmless leftovers, not load-bearing.)
 
 ### Azure-specific bits in the charts
 
@@ -199,7 +199,8 @@ kubectl -n bank-creditor logs deploy/agent --since=2m | grep -iE 'workflow|catal
 ```
 
 You want:
-- `Registering workflow 'dapr.agents.banker.workflow'`
+- `Registered node: agent` / `Registered node: tools` (confirms the LangGraph graph registered correctly — see [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#node-name-not-found-in-registry) if you see `Could not extract callable for node` instead)
+- `Registering workflow 'dapr.langgraph.Banker.workflow'`
 - `Starting gRPC worker that connects to dns:grpc-<prj>.<wildcard>:443`
 - **No** `Connection refused` / `UNAVAILABLE` / `timeout`
 

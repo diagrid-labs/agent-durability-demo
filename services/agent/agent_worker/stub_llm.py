@@ -5,87 +5,69 @@ Per-task flow:
 
     last tool ↦ next emission
     -----------------------------
-    (none)        → GetNextTask
-    GetNextTask   → if done: stop; else GetBalance(customer_id from task)
-    GetBalance    → if balance >= target: ReportDone(applied=false)
-                    else CreditAccount(task.customer_id, 1, task.tx_id, "banker")
-    CreditAccount → ReportDone(applied=true)
-    ReportDone    → GetNextTask
+    (none)          → get_next_task
+    get_next_task   → if done: stop; else get_balance(customer_id from task)
+    get_balance     → if balance >= target: report_done(applied=false)
+                      else credit_account(task.customer_id, 1, task.tx_id, "banker")
+    credit_account  → report_done(applied=true)
+    report_done     → stop
 
-Replay determinism: dapr-agents wraps each LLM call as a workflow activity, so
-the activity output is loaded from history on replay rather than re-derived.
-This stub is pure-functional too, so even direct re-invocation is safe.
+Replay determinism: DaprWorkflowGraphRunner executes each graph node as a
+Dapr Workflow activity, so a node's output is loaded from history on replay
+rather than re-derived. This stub is pure-functional too, so even direct
+re-invocation is safe.
 """
 
 import json
-import logging
 import re
 import uuid
 from typing import Any
 
-from dapr_agents.llm.chat import ChatClientBase
-from dapr_agents.types.message import (
-    AssistantMessage,
-    LLMChatCandidate,
-    LLMChatResponse,
-)
-
-log = logging.getLogger("stub_llm")
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 
-class StubLLM(ChatClientBase):
-    @classmethod
-    def from_prompty(cls, prompty_source, timeout=1500):  # noqa: ARG003
-        return cls()
+class StubLLM:
+    """Minimal stand-in for a LangChain chat model.
 
-    def generate(
-        self,
-        messages: Any = None,
-        *,
-        input_data: dict[str, Any] | None = None,
-        model: str | None = None,
-        tools: list[Any] | None = None,
-        response_format: Any = None,
-        structured_mode: str = "json",
-        stream: bool = False,
-        **kwargs: Any,
-    ) -> LLMChatResponse:
-        msg_list = self._normalize_messages(messages)
+    Only implements the two methods the graph's `agent` node actually calls:
+    `bind_tools` (to mirror `ChatOpenAI(...).bind_tools(tools)`) and `invoke`.
+    """
 
-        if response_format is not None:
-            return self._build_default_model(response_format)
+    def bind_tools(self, tools: list[Any]) -> "StubLLM":
+        return self
 
-        last_tool_name, last_tool_content = self._last_tool_message(msg_list)
-        requester = self._requester_from_messages(msg_list)
+    def invoke(self, messages: list[BaseMessage]) -> AIMessage:
+        last_tool_name, last_tool_content = self._last_tool_message(messages)
+        requester = self._requester_from_messages(messages)
 
         if last_tool_name is None:
-            return self._tool_call("GetNextTask", {"requester": requester})
+            return self._tool_call("get_next_task", {"requester": requester})
 
-        if last_tool_name == "ReportDone":
+        if last_tool_name == "report_done":
             return self._content("task complete")
 
-        if last_tool_name == "GetNextTask":
+        if last_tool_name == "get_next_task":
             task = self._parse_json(last_tool_content) or {}
             if task.get("done"):
                 return self._content("no work remaining")
             return self._tool_call(
-                "GetBalance", {"customer_id": int(task["customer_id"])}
+                "get_balance", {"customer_id": int(task["customer_id"])}
             )
 
-        if last_tool_name == "GetBalance":
-            task = self._find_active_task(msg_list)
+        if last_tool_name == "get_balance":
+            task = self._find_active_task(messages)
             if task is None:
-                # GetNextTask was windowed out of history. Restart the cycle —
-                # the orchestrator will hand us the same task again (or a new
-                # one if the previous credit landed before a retry).
-                return self._tool_call("GetNextTask", {})
+                # get_next_task was windowed out of history. Restart the
+                # cycle — the orchestrator will hand us the same task again
+                # (or a new one if the previous credit landed before a retry).
+                return self._tool_call("get_next_task", {"requester": requester})
             balance = self._parse_balance(last_tool_content)
             if balance >= int(task["target"]):
                 return self._tool_call(
-                    "ReportDone", {"tx_id": str(task["tx_id"]), "applied": False}
+                    "report_done", {"tx_id": str(task["tx_id"]), "applied": False}
                 )
             return self._tool_call(
-                "CreditAccount",
+                "credit_account",
                 {
                     "customer_id": int(task["customer_id"]),
                     "amount": 1,
@@ -95,46 +77,26 @@ class StubLLM(ChatClientBase):
                 },
             )
 
-        if last_tool_name == "CreditAccount":
-            task = self._find_active_task(msg_list)
-            tx_id = str(task["tx_id"]) if task else self._tx_id_from_credit(msg_list)
-            return self._tool_call(
-                "ReportDone", {"tx_id": tx_id, "applied": True}
-            )
+        if last_tool_name == "credit_account":
+            task = self._find_active_task(messages)
+            tx_id = str(task["tx_id"]) if task else self._tx_id_from_credit(messages)
+            return self._tool_call("report_done", {"tx_id": tx_id, "applied": True})
 
         return self._content("done")
 
     # --- helpers ------------------------------------------------------------
 
     @staticmethod
-    def _normalize_messages(messages: Any) -> list[dict[str, Any]]:
-        if messages is None:
-            return []
-        if isinstance(messages, str):
-            return [{"role": "user", "content": messages}]
-        if isinstance(messages, dict):
-            return [messages]
-        out = []
-        for m in messages:
-            if hasattr(m, "model_dump"):
-                out.append(m.model_dump())
-            elif isinstance(m, dict):
-                out.append(m)
-            else:
-                out.append({"role": "user", "content": str(m)})
-        return out
-
-    @staticmethod
-    def _requester_from_messages(messages: list[dict[str, Any]]) -> str:
-        """Pull `requester=...` out of the first user message in history.
+    def _requester_from_messages(messages: list[BaseMessage]) -> str:
+        """Pull `requester=...` out of the first human message in history.
 
         The orchestrator uses this for replay-idempotent task assignment, so
         it must be deterministic across replays — the prompt is part of the
         workflow input and persists in history."""
         for msg in messages:
-            if str(msg.get("role", "")).lower() != "user":
+            if not isinstance(msg, HumanMessage):
                 continue
-            content = msg.get("content", "")
+            content = msg.content
             if isinstance(content, list):
                 for block in content:
                     if isinstance(block, dict) and block.get("type") == "text":
@@ -148,42 +110,38 @@ class StubLLM(ChatClientBase):
         return ""
 
     @staticmethod
-    def _last_tool_message(messages: list[dict[str, Any]]) -> tuple[str | None, Any]:
+    def _last_tool_message(messages: list[BaseMessage]) -> tuple[str | None, Any]:
         for msg in reversed(messages):
-            if msg.get("role") == "tool":
-                return msg.get("name"), msg.get("content")
+            if isinstance(msg, ToolMessage):
+                return msg.name, msg.content
         return None, None
 
     @classmethod
     def _find_active_task(
-        cls, messages: list[dict[str, Any]]
+        cls, messages: list[BaseMessage]
     ) -> dict[str, Any] | None:
-        """Walk back through history for the most recent GetNextTask result.
+        """Walk back through history for the most recent get_next_task result.
 
         Returns the parsed task dict, or None if it's been windowed out."""
         for msg in reversed(messages):
-            if msg.get("role") == "tool" and msg.get("name") == "GetNextTask":
-                parsed = cls._parse_json(msg.get("content"))
+            if isinstance(msg, ToolMessage) and msg.name == "get_next_task":
+                parsed = cls._parse_json(msg.content)
                 if parsed and not parsed.get("done"):
                     return parsed
                 return None
         return None
 
     @staticmethod
-    def _tx_id_from_credit(messages: list[dict[str, Any]]) -> str:
-        """Last-resort: pull tx_id from the assistant's CreditAccount tool call."""
+    def _tx_id_from_credit(messages: list[BaseMessage]) -> str:
+        """Last-resort: pull tx_id from the assistant's credit_account tool call."""
         for msg in reversed(messages):
-            if msg.get("role") != "assistant":
+            if not isinstance(msg, AIMessage):
                 continue
-            for call in msg.get("tool_calls") or []:
-                fn = call.get("function") or {}
-                if fn.get("name") == "CreditAccount":
-                    try:
-                        args = json.loads(fn.get("arguments") or "{}")
-                        if "tx_id" in args:
-                            return str(args["tx_id"])
-                    except (json.JSONDecodeError, TypeError):
-                        pass
+            for call in msg.tool_calls or []:
+                if call.get("name") == "credit_account":
+                    args = call.get("args") or {}
+                    if "tx_id" in args:
+                        return str(args["tx_id"])
         return ""
 
     @staticmethod
@@ -197,13 +155,6 @@ class StubLLM(ChatClientBase):
                 return json.loads(content)
             except (json.JSONDecodeError, TypeError):
                 return None
-        if isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    try:
-                        return json.loads(block.get("text", ""))
-                    except (json.JSONDecodeError, TypeError):
-                        continue
         return None
 
     @classmethod
@@ -217,43 +168,18 @@ class StubLLM(ChatClientBase):
         return 0.0
 
     @staticmethod
-    def _build_default_model(model_cls: Any) -> Any:
-        try:
-            fields = getattr(model_cls, "model_fields", {})
-            kwargs: dict[str, Any] = {}
-            for name, info in fields.items():
-                ann = str(info.annotation)
-                if "str" in ann:
-                    kwargs[name] = "stub"
-                elif "int" in ann:
-                    kwargs[name] = 0
-                elif "float" in ann:
-                    kwargs[name] = 0.0
-                elif "bool" in ann:
-                    kwargs[name] = False
-                else:
-                    kwargs[name] = None
-            return model_cls(**kwargs)
-        except Exception:
-            return {"summary": "stub"}
-
-    @staticmethod
-    def _tool_call(name: str, arguments: dict[str, Any]) -> LLMChatResponse:
-        tool_call = {
-            "id": f"call_{uuid.uuid4().hex[:12]}",
-            "type": "function",
-            "function": {"name": name, "arguments": json.dumps(arguments)},
-        }
-        message = AssistantMessage(content=None, tool_calls=[tool_call])
-        return LLMChatResponse(
-            results=[LLMChatCandidate(message=message, finish_reason="tool_calls")],
-            metadata={"stub": True},
+    def _tool_call(name: str, arguments: dict[str, Any]) -> AIMessage:
+        return AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": f"call_{uuid.uuid4().hex[:12]}",
+                    "name": name,
+                    "args": arguments,
+                }
+            ],
         )
 
     @staticmethod
-    def _content(text: str) -> LLMChatResponse:
-        message = AssistantMessage(content=text)
-        return LLMChatResponse(
-            results=[LLMChatCandidate(message=message, finish_reason="stop")],
-            metadata={"stub": True},
-        )
+    def _content(text: str) -> AIMessage:
+        return AIMessage(content=text)

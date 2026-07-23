@@ -1,6 +1,6 @@
 # Bank Creditor on Catalyst — Local Mode
 
-Run the dapr-agents Bank Creditor demo on your laptop with the agent's Dapr APIs proxied through **Diagrid Catalyst**. Workflow runtime, state store, and placement run in Catalyst; the agent process, MCP server, and bank Postgres run locally.
+Run the Bank Creditor demo (a LangGraph agent, durably executed via `diagrid.agent.langgraph`) on your laptop with the agent's Dapr APIs proxied through **Diagrid Catalyst**. Workflow runtime, state store, and placement run in Catalyst; the agent process, MCP server, and bank Postgres run locally.
 
 > For a k8s deploy that uses Catalyst Self-Hosted (no local `diagrid dev run`), see [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md) — that's also the canonical walkthrough for the `diagrid mcpserver` commands referenced below, since the agent's tool calls now go through Catalyst's MCP proxy rather than a direct connection.
 
@@ -37,7 +37,7 @@ Run the dapr-agents Bank Creditor demo on your laptop with the agent's Dapr APIs
 
 ## 1. Provision Catalyst resources
 
-dapr-agents needs both managed workflow **and** agent infrastructure (managed conversation API, agent state components). Both must be set at project creation — they cannot be enabled on an existing project.
+This demo needs both managed workflow **and** agent infrastructure at project-create time — they cannot be enabled on an existing project. `--enable-agent-infrastructure` originally provisioned the `agent-memory` state store dapr-agents used for chat memory; the LangGraph migration no longer reads that store directly (see the `AGENT_STATE_STORE` note below), but this hasn't been re-verified against a project created with `--enable-managed-workflow` alone — keep passing both flags until that's confirmed.
 
 ```bash
 diagrid login
@@ -61,7 +61,7 @@ diagrid project get bank-creditor-local   # ManagedWorkflowStore: enabled (+ age
 diagrid component list                 # agent-memory state.diagrid all app identities ready
 ```
 
-When invoking the agent in step 4, set `AGENT_STATE_STORE=agent-memory` so the SDK looks up the right component.
+`AGENT_STATE_STORE` is no longer read by the agent code — the LangGraph migration dropped the separate chat-memory state store; durability now comes entirely from Dapr Workflow activity persistence in whatever store `--enable-managed-workflow` provisions. No env var needed for this.
 
 ## 2. Bring up local supporting services
 
@@ -118,21 +118,12 @@ diagrid dev run --file dapr.yaml --project bank-creditor-local \
 
 The `--skip-*` flags prevent `dev run` from auto-creating duplicate default components on top of the ones agent-infrastructure already provisioned in §1.
 
-Local Catalyst historically requires the short alias `agent_workflow` for the schedule name, while every other runtime target uses the fully-qualified `dapr.agents.Banker.workflow`. The agent code defaults to the qualified name; set the env override here:
-
-```bash
-# In dapr.yaml's `env:` section, or via shell before `diagrid dev run`:
-export FORCE_WORKFLOW_NAME=agent_workflow
-```
-
-If you forget this, scheduled workflows will fail with `OrchestratorNotRegisteredError`.
-
 This will:
 1. Authenticate against your `bank-creditor` project.
 2. Open a dev tunnel from Catalyst back to `localhost:8000`.
 3. Spawn `uvicorn agent_worker.main:app` and a local daprd that proxies all Dapr API calls to Catalyst.
 
-You should see `agent + runtime started (stub=True)` once the FastAPI app finishes its `/v1.0/healthz/outbound` wait.
+You should see `runner started (stub=True)` once the FastAPI app finishes its `/v1.0/healthz/outbound` wait — preceded by `Registered node: agent` / `Registered node: tools` and `Registering workflow 'dapr.langgraph.Banker.workflow' with runtime`.
 
 ## 5. Trigger a workflow
 
@@ -174,7 +165,7 @@ diagrid project delete bank-creditor-local
 
 ## Notes & gotchas
 
-- **`max_iterations=10`** in `services/agent/agent_worker/agent.py` caps the stub agent's tool-call loop per workflow (it alternates `get_next_task` / `get_balance` / `credit_account` / `report_done`, one credit per workflow instance).
+- **The stub agent's tool-call loop is inherently bounded** — the LangGraph state machine in `services/agent/agent_worker/stub_llm.py` alternates `get_next_task` / `get_balance` / `credit_account` / `report_done`, one credit per workflow instance, then stops. `DaprWorkflowGraphRunner`'s own `max_steps` (default 100, passed as a `build_runner()` kwarg if you ever need to override it) is well above this and shouldn't need tuning.
 - **Real LLM mode** (`STUB_LLM=false`, with `OPENAI_API_KEY` set in `dapr.yaml`'s `env:`) only works with a model that emits OpenAI-compatible structured tool calls.
 - **Tool calls fail with `403 Forbidden`** — no MCP access grant yet for `agent-worker`, or it's missing one of the four tools. Re-run the `diagrid mcpserver access grant` command in step 2.
 - **Workflow name** is the most common stumbling block — see [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#orchestratornotregistererror-a-x-orchestrator-was-not-registered).

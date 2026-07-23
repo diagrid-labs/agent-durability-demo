@@ -20,20 +20,19 @@ Common causes below.
 
 The workflow engine dispatched a work item to the Python worker, but the name in the dispatch doesn't match anything in the worker's local registry.
 
-dapr-agents 1.x registers the orchestrator under `dapr.agents.<name-lower>.workflow` (lowercase, e.g. `dapr.agents.banker.workflow`). Confirm the registered name from the agent's startup log:
+`diagrid.agent.langgraph`'s `DaprWorkflowGraphRunner` registers the orchestrator under `dapr.<framework>.<TitleCaseName>.workflow` — for this demo, `dapr.langgraph.Banker.workflow` (`name="banker"` gets TitleCased by `diagrid.agent.core.workflow.naming.sanitize_agent_name`, matching the convention dapr-agents used, so old notes referencing `dapr.agents.banker.workflow` are stale). Confirm the registered name from the agent's startup log:
 
 ```
-WorkflowRuntime INFO: Registering workflow 'dapr.agents.banker.workflow' with runtime
+WorkflowRuntime INFO: Registering workflow 'dapr.langgraph.Banker.workflow' with runtime
 ```
 
-Schedule with that exact name. The code in `services/agent/agent_worker/main.py` does this by default. If something downstream has overridden it (e.g. `FORCE_WORKFLOW_NAME` env var), reset:
+Unlike the old dapr-agents version of this demo, `main.py` never constructs or overrides this name itself — `/schedule-one` and `/trigger` call `runner.run_async(..., workflow_id=instance_id)` directly, which schedules the exact function object the runtime registered. There's no `FORCE_WORKFLOW_NAME` env var anymore, so if you see this error, the mismatch is almost always a stale pod still running the old dapr-agents image (rebuild and force-pull) or a graph node that failed to register — see the next entry.
 
-```bash
-kubectl -n bank-creditor set env deployment/agent FORCE_WORKFLOW_NAME-
-kubectl -n bank-creditor rollout restart deployment/agent
-```
+## `Node '<name>' not found in registry`
 
-If running locally under `diagrid dev run` and the fully-qualified name fails there, set `FORCE_WORKFLOW_NAME=agent_workflow` — local Catalyst's daprd has historically accepted only the short alias.
+`DaprWorkflowGraphRunner._register_graph_components()` (as of `diagrid[langgraph]==0.4.2`) only extracts a node's *sync* callable to register it — an `async def` graph node has LangGraph's internal `RunnableCallable.func` set to `None` (the coroutine function lives at `.afunc` instead), so it silently never registers and the workflow fails at that node with this error. Check the agent's startup log for `Could not extract callable for node: <name>` (means it never registered) vs `Registered node: <name>` (means it's fine and the failure is something else).
+
+Fix (already applied in `services/agent/agent_worker/agent.py`): register plain `def` node functions that return the *unawaited* coroutine from an inner `async def` implementation, e.g. `def call_tools(state): return _call_tools_impl(state)`. This keeps LangGraph's sync/async node-type detection on the sync path while still handing the Dapr activity executor a coroutine to await — its `execute_node_activity` already has an `asyncio.iscoroutine(result)` branch for exactly this shape. If you add a new graph node and forget this pattern, this is the error you'll hit.
 
 ## `failed to create orchestration instance: the state store is not found` / `state store ... is not found`
 
@@ -170,16 +169,8 @@ The durability story (the actual point of the demo) works at any throughput.
 `kubectl set env … VAR-` (trailing dash) removes the var from the deployment spec, but if pods were already running with it set, you still need a `rollout restart` for the new spec to take effect:
 
 ```bash
-kubectl -n bank-creditor set env deployment/agent FORCE_WORKFLOW_NAME-
+kubectl -n bank-creditor set env deployment/agent AGENT_MODEL-
 kubectl -n bank-creditor rollout restart deployment/agent
-kubectl -n bank-creditor exec deploy/agent -c agent -- printenv | grep FORCE_WORKFLOW_NAME
+kubectl -n bank-creditor exec deploy/agent -c agent -- printenv | grep AGENT_MODEL
 # Should print nothing.
 ```
-
-## Workflows show in Catalyst console but are scheduled with the wrong name
-
-If Catalyst's workflow list shows entries named `agent_workflow` but they fail with `OrchestratorNotRegisteredError`, the agent code is using the wrong schedule name for that environment.
-
-The demo unifies on `dapr.agents.banker.workflow` (lowercase, matches what dapr-agents 1.x registers). The `FORCE_WORKFLOW_NAME` env var is the per-deployment override if a runtime needs the short alias (currently only Catalyst Local under `diagrid dev run` has historically required it).
-
-If `FORCE_WORKFLOW_NAME` is unset and you're still seeing `agent_workflow` in the console, the running pod is on a stale image — rebuild and force-pull.

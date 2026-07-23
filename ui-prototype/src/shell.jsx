@@ -92,7 +92,7 @@ function Counters({ state }) {
       <Counter label="Agents alive" value={`${alive} / ${totalAgents}`}
         accent={alive === totalAgents ? 'var(--green)' : alive / totalAgents > 0.7 ? 'var(--amber)' : 'var(--red)'}
         sub={`${((alive/totalAgents)*100).toFixed(0)}% online`} />
-      <Counter label="Customers at target" value={`${completed} / ${totalCustomers}`}
+      <Counter label="Accounts at target" value={`${completed} / ${totalCustomers}`}
         accent={completed === totalCustomers ? 'var(--green)' : 'var(--accent)'}
         sub={`${(pct*100).toFixed(1)}% of run`} progress={Math.min(1, Math.max(0, pct))} />
     </div>

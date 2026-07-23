@@ -4,9 +4,12 @@ version = "0.1.0"
 description = "Dapr workflow worker for the Bank Creditor demo"
 requires-python = ">=3.11"
 dependencies = [
-  "dapr-agents>=1.0.5",
-  "dapr>=1.18.3",
-  "dapr-ext-workflow>=1.18.3",
+  "diagrid[langgraph]>=0.4.2",
+  "langgraph>=0.2.0",
+  "langchain-core>=0.3.0",
+  "langchain-openai>=0.2.0",
+  "dapr",
+  "dapr-ext-workflow",
   "mcp>=1.2.0",
   "fastapi>=0.110.0",
   "uvicorn[standard]>=0.30.0",

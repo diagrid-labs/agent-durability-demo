@@ -93,19 +93,17 @@ function Legend({ color, label }) {
 /* ================ Customer accounts — 10 first-class rows ================ */
 function CustomersGrid({ state }) {
   const customers = state.customers;
-  const completed = customers.filter(c => c.balance >= TARGET_BAL).length;
   const totalNow = customers.reduce((s, c) => s + c.balance, 0);
   const totalGoal = customers.length * TARGET_BAL;
 
   return (
     <div className="card" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
       <div className="card-h">
-        <span className="label-md" style={{ color: 'var(--fg)' }}>Customer accounts</span>
+        <span className="label-md" style={{ color: 'var(--fg)' }}>Accounts</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span className="mono" style={{ fontSize: 11, color: 'var(--fg-2)', whiteSpace: 'nowrap' }}>
             {fmtMoney(totalNow)}<span style={{ color: 'var(--fg-3)' }}>/{fmtMoney(totalGoal)}</span>
           </span>
-          <span className="pill teal">{completed}/{customers.length}</span>
         </div>
       </div>
       <div style={{
