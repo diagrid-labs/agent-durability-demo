@@ -8,27 +8,25 @@ LangGraph agent durability demo, running as durable Dapr Workflows via Diagrid C
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│ UI (served by MCP) ─── WS /ws/telemetry ─── per-tx push          │
-│   ▲                                                              │
-│   │ HTTP                                                         │
-│ ┌─┴────────────────┐    ┌─────────────────┐    ┌──────────────┐  │
-│ │  MCP server      │◄───┤  Agent worker   │◄───┤  Dapr        │  │
-│ │  · orchestrator  │    │  · LangGraph    │    │  · workflow  │  │
-│ │  · chaos surface │    │  · stub LLM     │    │  · placement │  │
-│ │  · ws broadcast  │    │                 │    │  · scheduler │  │
-│ │  · pod-kill ctrl │    └────────┬────────┘    └──────────────┘  │
-│ └─────────┬────────┘             │                               │
-│           │                      │ schedule-one                  │
-│           ▼                      │                               │
-│      ┌────────────┐     ┌────────▼───────┐                       │
-│      │ Postgres   │◄────┤   Replenisher  │                       │
-│      │ bankdemo + │     │   (MCP-side)   │                       │
-│      │ dapr_state │     └────────────────┘                       │
-│      └────────────┘                                              │
+│ UI (served by MCP)                                                │
+│   ▲                                                               │
+│   │ HTTP                                                          │
+│ ┌─┴────────────────┐          ┌────────────────────────────┐      │
+│ │ MCP server       │◄─────────│ Agent worker               │      │
+│ │ · orchestrator   │          │ · LangGraph                │      │
+│ │ · chaos surface  │          │ · diagrid.agent.langgraph  │      │
+│ └─┬────────────────┘          └─┬──────────────────────────┘      │
+│   │                             │ schedule-one                    │
+│   ▼                             ▼                                 │
+│     ┌──────────────┐          ┌────────────────────┐              │
+│     │ Postgres     │◄─────────│ Replenisher        │              │
+│     │ bankdemo +   │          │ (MCP-side)         │              │
+│     │ dapr_state   │          └────────────────────┘              │
+│     └──────────────┘                                              │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-The agent reaches its Postgres-backed tools (`get_balance`, `credit_account`, etc.) through Catalyst's managed MCP proxy — there's no non-Catalyst transport for this anymore. Every deployment path therefore requires a Catalyst project (Self-Hosted or Cloud); see [Deployment](docs/DEPLOYMENT.md) for the options.
+The agent reaches its Postgres-backed tools (`get_balance`, `credit_account`, etc.) through Catalyst's managed MCP proxy. Every deployment path therefore requires a Catalyst project (Self-Hosted or Cloud); see [Deployment](docs/DEPLOYMENT.md) for the options.
 
 ## Documentation
 
