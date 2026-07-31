@@ -1,10 +1,10 @@
 /* eslint-disable */
 const { useMemo: uM2, useEffect: uE2, useState: uS2 } = React;
 
-/* ================ Agents grid — 10x10 (or sized to count) ================ */
+/* ================ Agents grid — 10 rows, one per account-bound instance ================ */
 function AgentsGrid({ state }) {
   const agents = state.agents;
-  const cols = agents.length <= 100 ? 10 : Math.ceil(Math.sqrt(agents.length));
+  const customers = state.customers;
   const recentMap = uM2(() => {
     const m = new Map();
     for (const a of state.activity) {
@@ -15,7 +15,7 @@ function AgentsGrid({ state }) {
 
   // No memo — `state.agents` is mutated in place (the WS slot-state handler
   // flips agent.status without replacing the array). Memoizing on the array
-  // reference would freeze the counts. The loop is 100 elements, trivial.
+  // reference would freeze the counts. The loop is 10 elements, trivial.
   let alive = 0, restarting = 0, dead = 0, idle = 0;
   for (const a of agents) {
     if (a.status === 'alive') alive++;
@@ -39,43 +39,96 @@ function AgentsGrid({ state }) {
         </div>
       </div>
       <div style={{
-        flex: 1, padding: 14, minHeight: 0, overflow: 'auto',
+        flex: 1, padding: '10px 14px', minHeight: 0, overflow: 'hidden',
         display: 'grid',
-        gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-        gridAutoRows: 'minmax(48px, 1fr)',
-        gap: 7,
-        alignContent: 'stretch',
+        gridTemplateColumns: 'minmax(0, 1fr)',
+        gridTemplateRows: 'repeat(10, minmax(0, 1fr))',
+        gap: 6,
       }}>
         {agents.map(a => {
-          const recent = recentMap.get(a.id);
-          const tx = recent && (performance.now() - recent < 350);
-          let bg = 'var(--green-soft)', bd = '#c8e6d4', dot = 'var(--green)', fg = 'var(--green)';
-          if (a.status === 'idle')      { bg = '#f4f5f7';            bd = '#e3e6eb'; dot = 'var(--fg-3)'; fg = 'var(--fg-3)'; }
-          else if (a.status === 'restarting') { bg = 'var(--amber-soft)'; bd = '#f3deb3'; dot = 'var(--amber)'; fg = 'var(--amber)'; }
-          else if (a.status === 'dead')  { bg = 'var(--red-soft)';   bd = '#f1c5c8'; dot = 'var(--red)';   fg = 'var(--red)'; }
-          return (
-            <div key={a.id} className={'agent-tile' + (tx ? ' tx' : '')}
-              title={`${a.label} · ${a.status} · ${a.txCount} tx`}
-              style={{
-                background: bg, border: `1px solid ${bd}`, borderRadius: 6,
-                padding: '6px 7px',
-                display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-                minWidth: 0, minHeight: 0,
-                overflow: 'hidden',
-                position: 'relative',
-              }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-                <span className="dot" style={{ background: dot, width: 7, height: 7, flexShrink: 0 }} />
-                <span className="mono" style={{ fontSize: 10, color: 'var(--fg-2)', fontWeight: 500, letterSpacing: '-0.01em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {String(a.id+1).padStart(3,'0')}
-                </span>
-              </div>
-              <span className="mono" style={{ fontSize: 12, color: fg, fontWeight: 600, textAlign: 'right', letterSpacing: '-0.02em', lineHeight: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {a.txCount}
-              </span>
-            </div>
-          );
+          const recentTs = recentMap.get(a.id);
+          const recent = recentTs && (performance.now() - recentTs < 350);
+          return <AgentRow key={a.id} a={a} customer={customers[a.id]} recent={recent} />;
         })}
+      </div>
+    </div>
+  );
+}
+
+function AgentRow({ a, customer, recent }) {
+  // Progress is derived from the bound account's actual balance — not a
+  // separately-incremented counter — so it can never exceed 100 (balance is
+  // itself capped at TARGET_BAL by credit_account's idempotency) and can't
+  // drift from double-counted WS events.
+  const rawCredited = customer ? (customer.balance - START_BAL) : (a.txCount || 0);
+  const credited = Math.max(0, Math.min(100, Math.round(rawCredited)));
+  const pct = credited / 100;
+
+  // One status axis drives the whole row's color — no separate text label
+  // (a long-running single workflow instance isn't meaningfully "idle" or
+  // "alive" as a category the way a pool of short-lived workers was).
+  let color = 'var(--green)', cardBg = 'var(--green-soft)', cardBd = '#c8e6d4';
+  if (a.status === 'idle') {
+    color = 'var(--fg-3)'; cardBg = '#f4f5f7'; cardBd = '#e3e6eb';
+  } else if (a.status === 'restarting') {
+    color = 'var(--amber)'; cardBg = 'var(--amber-soft)'; cardBd = '#f3deb3';
+  } else if (a.status === 'dead') {
+    color = 'var(--red)'; cardBg = 'var(--red-soft)'; cardBd = '#f1c5c8';
+  }
+
+  return (
+    <div title={`agent-${String(a.id + 1).padStart(3, '0')} · crediting ${customer ? customer.name : 'no one yet'} · $${credited}/100`}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '6px 12px',
+        background: cardBg,
+        border: `1px solid ${cardBd}`,
+        borderRadius: 8,
+        minWidth: 0, minHeight: 0,
+        boxShadow: recent && a.status === 'alive' ? '0 0 0 3px var(--accent-soft)' : 'none',
+        transition: 'background 360ms ease, border-color 240ms ease, box-shadow 240ms ease',
+      }}>
+      {/* Identity avatar */}
+      <div style={{
+        width: 26, height: 26, borderRadius: '50%',
+        background: color,
+        color: '#fff', fontWeight: 600, fontSize: 11,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        letterSpacing: '-0.01em',
+        transition: 'background 360ms ease',
+        flexShrink: 0,
+      }}>
+        {String(a.id + 1).padStart(2, '0')}
+      </div>
+
+      {/* Bound account + progress bar, full remaining width */}
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <span style={{
+          fontSize: 13, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.01em',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>
+          <span style={{ color: 'var(--fg-3)', fontWeight: 500 }}>→ </span>
+          {customer ? customer.name : '—'}
+        </span>
+        <div style={{ height: 4, background: '#eef0f3', borderRadius: 2, overflow: 'hidden' }}>
+          <div style={{
+            height: '100%',
+            width: `${(pct * 100).toFixed(1)}%`,
+            background: color,
+            transition: 'width 240ms ease, background 360ms ease',
+          }} />
+        </div>
+      </div>
+
+      {/* Credit progress, right-aligned — $ credited so far out of 100 */}
+      <div style={{ flexShrink: 0, textAlign: 'right' }}>
+        <div className="mono" style={{
+          fontSize: 15, fontWeight: 600, letterSpacing: '-0.02em',
+          color, lineHeight: 1.2,
+          transition: 'color 360ms ease',
+        }}>
+          ${credited}<span style={{ fontSize: 11, fontWeight: 500, color: 'var(--fg-3)' }}>/100</span>
+        </div>
       </div>
     </div>
   );

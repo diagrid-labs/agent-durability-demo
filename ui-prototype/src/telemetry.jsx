@@ -38,7 +38,7 @@ async function postJSON(path, body) {
 
 function createTelemetry(initial) {
   const cfg = {
-    agentCount: 100,
+    agentCount: 10,
     customerCount: 10,
     // Slow poll for state reconciliation (counters, mcp-log, customer
     // enrichment). Per-tx balance updates arrive over WebSocket so the heatmap
@@ -115,15 +115,18 @@ function createTelemetry(initial) {
 
   function distributeActivity(newTx) {
     if (newTx <= 0) return;
+    // Each agent is permanently bound to the customer sharing its index —
+    // this is a client-side fallback for the (primary) WS-driven path, so
+    // pair agent i with customer i rather than picking either independently.
     const alive = state.agents.filter(a => a.status === 'alive');
     if (alive.length === 0) return;
     const t = nowMs();
     const burst = Math.min(newTx, Math.max(20, alive.length));
     for (let i = 0; i < burst; i++) {
       const a = alive[Math.floor(Math.random() * alive.length)];
-      const c = state.customers[Math.floor(Math.random() * Math.max(1, state.customers.length))];
+      const c = state.customers[a.id];
       a.txCount++;
-      state.activity.unshift({ agentId: a.id, customerId: c ? c.id : 0, ts: t });
+      state.activity.unshift({ agentId: a.id, customerId: c ? c.id : a.id, ts: t });
     }
     if (state.activity.length > 120) state.activity.length = 120;
   }
@@ -326,21 +329,9 @@ function createTelemetry(initial) {
       c.balance = next;
       c.txCount = (c.txCount || 0) + 1;
     }
-    // Animate the exact slot whose workflow committed this tx — the slot
-    // number is parsed by the server from the workflow's requester ID
-    // (agent-NNN-task-K) and persisted on the row. Falls back to a random
-    // alive cell only when the row lacks a slot (legacy / ad-hoc inserts).
-    let agent = null;
-    if (msg.agent_slot != null) {
-      const slotIdx = Number(msg.agent_slot) - 1;
-      if (slotIdx >= 0 && slotIdx < state.agents.length) {
-        agent = state.agents[slotIdx];
-      }
-    }
-    if (!agent) {
-      const alive = state.agents.filter(a => a.status === 'alive');
-      if (alive.length) agent = alive[Math.floor(Math.random() * alive.length)];
-    }
+    // Each customer has exactly one permanently-bound agent (same index) —
+    // animate that agent directly rather than relying on a separate slot id.
+    const agent = (idx >= 0 && idx < state.agents.length) ? state.agents[idx] : null;
     if (agent) {
       agent.txCount = (agent.txCount || 0) + 1;
       state.activity.unshift({ agentId: agent.id, customerId: cid, ts: nowMs() });
@@ -364,15 +355,13 @@ function createTelemetry(initial) {
         if (!msg || !msg.type) return;
         if (msg.type === 'tx') {
           applyTx(msg);
-          // Each tx implicitly proves the slot is alive again — if it had
-          // been marked dead by a pod-kill, relight it now.
-          if (msg.agent_slot != null) {
-            const idx = Number(msg.agent_slot) - 1;
-            const a = state.agents[idx];
-            if (a && a.status !== 'alive') {
-              a.status = 'alive';
-              a.restartingUntil = 0;
-            }
+          // Each tx implicitly proves that customer's agent is alive again —
+          // if it had been marked dead by a pod-kill, relight it now.
+          const idx = Number(msg.customer_id) - 1;
+          const a = state.agents[idx];
+          if (a && a.status !== 'alive') {
+            a.status = 'alive';
+            a.restartingUntil = 0;
           }
         } else if (msg.type === 'zone-state' && msg.zone) {
           const ttl = Number(msg.ttl_seconds || 6) * 1000;
@@ -474,7 +463,6 @@ function createTelemetry(initial) {
     // Agent worker control (MCP server's /agent/spawn drives its in-process Replenisher)
     async startRun(opts) {
       const body = {
-        agents: Number((opts && opts.agents) ?? cfg.agentCount),
         customers: Number((opts && opts.customers) ?? cfg.customerCount),
         credits_per_customer: Number((opts && opts.creditsPerCustomer) ?? 100),
         target: Number((opts && opts.target) ?? 200),
@@ -486,7 +474,7 @@ function createTelemetry(initial) {
         // Start click to look like a continuation).
         rebuildAgents();
         state.run.active = true;
-        state.run.target = body.agents;
+        state.run.target = body.customers;
         state.run.error = null;
         state.startedAt = nowMs();
         state.clock = 0;

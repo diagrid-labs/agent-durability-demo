@@ -161,7 +161,7 @@ helm -n bank-creditor upgrade --install agent ./deploy/agent \
   --wait
 ```
 
-The chart defaults to `stateStore.componentName: agent-memory` and `stateStore.create: false` — matches what Catalyst auto-provisions. No `--set stateStore.*` overrides needed. (Note: since the LangGraph migration, the agent code no longer actually reads `AGENT_STATE_STORE` — durability comes entirely from Dapr Workflow activity persistence. These values are harmless leftovers, not load-bearing.)
+The chart defaults to `stateStore.componentName: agent-memory` and `stateStore.create: false` — matches what Catalyst auto-provisions. No `--set stateStore.*` overrides needed. (Note: the agent code doesn't read this store directly — durability comes entirely from Dapr Workflow activity persistence. `stateStore.create` still controls whether `templates/component-state.yaml` renders the in-cluster CRD, so it stays load-bearing for a non-Catalyst chart deploy.)
 
 ### Azure-specific bits in the charts
 

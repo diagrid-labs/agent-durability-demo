@@ -5,3 +5,7 @@ gateway:
     service:
       port: 80
       httpsPort: 443
+agent:
+    config:
+      otel:
+        loki_endpoint: https://catalyst-logs.r1.diagrid.io/otlp/v1/logs

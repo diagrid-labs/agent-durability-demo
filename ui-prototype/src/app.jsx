@@ -2,7 +2,6 @@
 const { useState: uS9, useEffect: uE9, useMemo: uM9 } = React;
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
-  "agentCount": 100,
   "tickMs": 1200,
   "chaosIntensity": "medium",
   "mcpLatencyMs": 80
@@ -10,8 +9,9 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 
 function App() {
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  // One agent per customer account — no longer an independently configurable knob.
   const feed = uM9(() => window.createTelemetry({
-    agentCount: tweaks.agentCount,
+    agentCount: 10,
     customerCount: 10,
     tickMs: tweaks.tickMs,
     mcpLatencyMs: tweaks.mcpLatencyMs,
@@ -22,11 +22,10 @@ function App() {
   // Sync tweaks to feed cfg
   uE9(() => {
     feed.control.setCfg({
-      agentCount: Number(tweaks.agentCount),
       tickMs: Number(tweaks.tickMs),
       mcpLatencyMs: Number(tweaks.mcpLatencyMs),
     });
-  }, [tweaks.agentCount, tweaks.tickMs, tweaks.mcpLatencyMs]);
+  }, [tweaks.tickMs, tweaks.mcpLatencyMs]);
 
   return (
     <div style={{
@@ -70,8 +69,6 @@ function App() {
 
       <TweaksPanel>
         <TweakSection label="Fleet" />
-        <TweakSlider label="Agent count" value={tweaks.agentCount} min={10} max={400} step={10}
-          onChange={(v) => setTweak('agentCount', v)} />
         <TweakSlider label="Tick interval" value={tweaks.tickMs} min={150} max={2000} step={50} unit="ms"
           onChange={(v) => setTweak('tickMs', v)} />
 

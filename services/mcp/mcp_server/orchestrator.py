@@ -1,8 +1,13 @@
-"""In-memory work queue for the bank-creditor demo.
+"""In-memory work queues for the bank-creditor demo.
 
-Generates `customers * credits_per_customer` tasks (default 10 * 100 = 1000),
-hands them out one at a time via `next_task`, and tracks completion via
-`report_done`. Lives inside the MCP server process for simplicity.
+Generates `customers * credits_per_customer` tasks (default 10 * 100 = 1000)
+split into one queue per customer, hands them out one at a time via
+`next_task(requester, customer_id)`, and tracks completion via `report_done`.
+Lives inside the MCP server process for simplicity.
+
+Each customer's queue is owned by exactly one long-running workflow instance
+for the life of a run — there's no cross-customer contention, so `next_task`
+is scoped to a single customer's queue rather than a shared pool.
 
 Each work cycle is scoped to an `execution_runs` row in Postgres so the
 demo can be replayed without truncating history — tx_ids recycle across
@@ -46,7 +51,7 @@ class State:
     customers: int = 10
     credits_per_customer: int = 100
     target: int = 200
-    queue: list[Task] = field(default_factory=list)
+    queues: dict[int, list[Task]] = field(default_factory=dict)
     in_flight: dict[str, Task] = field(default_factory=dict)
     in_flight_at: dict[str, float] = field(default_factory=dict)  # tx_id -> claim ts
     by_requester: dict[str, str] = field(default_factory=dict)  # requester -> tx_id
@@ -54,6 +59,7 @@ class State:
     applied: int = 0
     skipped: int = 0
     released: int = 0  # tasks the timeout sweep returned to the queue
+    stopped: bool = False  # user hit Stop — see next_task()
 
 
 class Orchestrator:
@@ -77,25 +83,27 @@ class Orchestrator:
             self._populate()
 
     def _populate(self) -> None:
-        self._state.queue.clear()
         self._state.in_flight.clear()
         self._state.reported.clear()
         self._state.by_requester.clear()
         self._state.in_flight_at.clear()
         self._state.applied = 0
         self._state.skipped = 0
-        # Round-robin by step so all customers get credits in parallel.
-        for n in range(1, self._state.credits_per_customer + 1):
-            for c in range(1, self._state.customers + 1):
-                self._state.queue.append(
-                    Task(
-                        customer_id=c,
-                        tx_id=f"tx-c{c}-{n}",
-                        target=self._state.target,
-                        n=n,
-                        execution_run_id=self._state.execution_run_id,
-                    )
+        # One independent queue per customer — each is drained sequentially
+        # by the single workflow instance permanently bound to that account.
+        self._state.queues = {
+            c: [
+                Task(
+                    customer_id=c,
+                    tx_id=f"tx-c{c}-{n}",
+                    target=self._state.target,
+                    n=n,
+                    execution_run_id=self._state.execution_run_id,
                 )
+                for n in range(1, self._state.credits_per_customer + 1)
+            ]
+            for c in range(1, self._state.customers + 1)
+        }
 
     async def reset(
         self,
@@ -120,19 +128,37 @@ class Orchestrator:
             self._populate()
             return await self._snapshot_locked()
 
-    async def next_task(self, requester: str | None = None) -> dict[str, Any]:
-        """Return the next pending task for `requester`. If the requester
-        already has an in-flight task, return the same task — this makes the
-        endpoint idempotent across workflow replays."""
+    async def set_stopped(self, stopped: bool) -> None:
+        async with self._lock:
+            self._state.stopped = stopped
+
+    async def next_task(
+        self, requester: str | None = None, customer_id: int | None = None
+    ) -> dict[str, Any]:
+        """Return the next pending task for `requester`'s bound customer. If
+        the requester already has an in-flight task, return the same task —
+        this makes the endpoint idempotent across workflow replays.
+
+        Once `set_stopped(True)` has been called, every NEW task request
+        (i.e. not a replay of an already-in-flight one) gets {done: true} —
+        this is what actually stops a workflow instance from crediting more,
+        independent of whether Catalyst's own `terminate_workflow()` call
+        takes effect. An instance already holding an in-flight task still
+        gets to finish that one credit's cycle normally; only the next
+        loop-back is cut off. See CLAUDE.md's gotcha on Catalyst terminate
+        not reliably halting execution for why this exists."""
         async with self._lock:
             if requester:
                 existing_tx = self._state.by_requester.get(requester)
                 if existing_tx and existing_tx in self._state.in_flight:
                     task = self._state.in_flight[existing_tx]
                     return self._task_response(task)
-            if not self._state.queue:
+            if self._state.stopped:
                 return {"done": True}
-            task = self._state.queue.pop(0)
+            queue = self._state.queues.get(customer_id, [])
+            if not queue:
+                return {"done": True}
+            task = queue.pop(0)
             task.requester = requester
             self._state.in_flight[task.tx_id] = task
             self._state.in_flight_at[task.tx_id] = time.time()
@@ -141,11 +167,11 @@ class Orchestrator:
             return self._task_response(task)
 
     async def release_for_retry(self, tx_id: str) -> dict[str, Any]:
-        """Return an in-flight task to the front of the queue without marking
-        it as reported. Used when a transient error (chaos drop, DB hiccup,
-        agent crash mid-credit) means the task didn't actually complete —
-        otherwise `report_done` would permanently consume it and the
-        customer's last credits would never apply."""
+        """Return an in-flight task to the front of its customer's queue
+        without marking it as reported. Used when a transient error (chaos
+        drop, DB hiccup, agent crash mid-credit) means the task didn't
+        actually complete — otherwise `report_done` would permanently consume
+        it and the customer's last credits would never apply."""
         async with self._lock:
             task = self._state.in_flight.pop(tx_id, None)
             self._state.in_flight_at.pop(tx_id, None)
@@ -153,11 +179,12 @@ class Orchestrator:
                 return {"released": 0, "reason": "not in_flight"}
             if task.requester:
                 self._state.by_requester.pop(task.requester, None)
-            self._state.queue.insert(0, task)
+            self._state.queues.setdefault(task.customer_id, []).insert(0, task)
             self._state.released += 1
+            queue = self._state.queues[task.customer_id]
             return {
                 "released": 1,
-                "queue_remaining": len(self._state.queue),
+                "queue_remaining": len(queue),
                 "in_flight": len(self._state.in_flight),
             }
 
@@ -185,11 +212,14 @@ class Orchestrator:
                 "tx_id": tx_id,
                 "applied": applied,
                 "duplicate": duplicate,
-                "queue_remaining": len(self._state.queue),
+                "queue_remaining": self._queue_remaining_locked(),
                 "in_flight": len(self._state.in_flight),
                 "applied_total": self._state.applied,
                 "skipped_total": self._state.skipped,
             }
+
+    def _queue_remaining_locked(self) -> int:
+        return sum(len(q) for q in self._state.queues.values())
 
     @staticmethod
     def _task_response(task: Task) -> dict[str, Any]:
@@ -203,17 +233,18 @@ class Orchestrator:
         }
 
     async def sweep(self, timeout_seconds: float = 30.0) -> dict[str, Any]:
-        """Return in_flight tasks older than `timeout_seconds` to the queue.
+        """Return in_flight tasks older than `timeout_seconds` to their
+        customer's queue.
 
         Defense against leaked in_flight slots when an activity fails before
         ReportDone lands (e.g. transient MCP/DB errors with no retry, or a
-        worker crash mid-task). Returned tasks go to the front of the queue
-        so the next replenisher tick reassigns them quickly.
+        worker crash mid-task). The owning workflow instance is still alive
+        (or will be durably replayed by Dapr) and will simply re-claim the
+        task on its next `credit_next` call — this just unblocks that
+        instead of leaving the slot stuck forever.
 
-        Returns the list of orphan requesters (workflow instance ids) so the
-        replenisher can restart-in-place — keeping the same workflow id
-        across retries so the audit trail shows continuity rather than
-        spawning a new instance under a fresh id."""
+        Returns the list of orphan requesters (workflow instance ids) for
+        logging/telemetry purposes only."""
         async with self._lock:
             now = time.time()
             stale = [
@@ -230,9 +261,8 @@ class Orchestrator:
                 if task.requester:
                     orphans.append(task.requester)
                     self._state.by_requester.pop(task.requester, None)
-                # Front of queue → fast retry; otherwise tasks pile up at end
-                # while replenisher chews through fresh ones.
-                self._state.queue.insert(0, task)
+                # Front of its customer's queue → fast retry.
+                self._state.queues.setdefault(task.customer_id, []).insert(0, task)
                 self._state.released += 1
             return {
                 "released": len(stale),
@@ -256,9 +286,9 @@ class Orchestrator:
             run_id = self._state.execution_run_id
             target = self._state.target
             reported_snapshot = set(self._state.reported)
-            already_pending = {t.tx_id for t in self._state.queue} | set(
-                self._state.in_flight
-            )
+            already_pending = {
+                t.tx_id for q in self._state.queues.values() for t in q
+            } | set(self._state.in_flight)
         if not run_id:
             return {"ghosts": 0}
         actual = await self._db.get_transaction_ids(run_id)
@@ -279,7 +309,7 @@ class Orchestrator:
                 self._state.reported.discard(tx_id)
                 if self._state.applied > 0:
                     self._state.applied -= 1
-                self._state.queue.append(
+                self._state.queues.setdefault(customer_id, []).append(
                     Task(
                         customer_id=customer_id,
                         tx_id=tx_id,
@@ -307,7 +337,7 @@ class Orchestrator:
             "customers": self._state.customers,
             "credits_per_customer": self._state.credits_per_customer,
             "target": self._state.target,
-            "queue_remaining": len(self._state.queue),
+            "queue_remaining": self._queue_remaining_locked(),
             "in_flight": len(self._state.in_flight),
             # Overwritten by status() with the DB count; this in-memory value
             # is only seen by reset() snapshots, where it's correctly 0.

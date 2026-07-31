@@ -6,10 +6,9 @@ import os
 import httpx
 from dapr.ext.workflow import DaprWorkflowClient
 from fastapi import FastAPI, HTTPException
-from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from .agent import SYSTEM_PROMPT, build_runner
+from .agent import build_runner
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 log = logging.getLogger("main")
@@ -73,10 +72,10 @@ class TriggerBody(BaseModel):
 
 class ScheduleOneBody(BaseModel):
     instance_id: str = Field(min_length=1)
-    prompt: str = Field(default="")
+    customer_id: int = Field(ge=1)
 
 
-async def _schedule(instance_id: str, prompt: str) -> None:
+async def _schedule(instance_id: str, customer_id: int) -> None:
     """Durably schedule one graph run under `instance_id` and return as soon
     as Catalyst confirms it's been accepted — mirrors the crash-recovery
     quickstart's `/run` handler, which returns on the first `workflow_started`
@@ -85,14 +84,19 @@ async def _schedule(instance_id: str, prompt: str) -> None:
     `workflow_id` (not `thread_id`) is what becomes the actual Dapr workflow
     instance ID that `/status`, `/agent/instances/{id}/terminate`, and
     `/agent/instances/{id}/purge` key off of — DaprWorkflowGraphRunner
-    defaults it to a random `graph-<thread_id>-<uuid>` string otherwise."""
+    defaults it to a random `graph-<thread_id>-<uuid>` string otherwise.
+
+    The initial state is the fixed-size BankerState shape (agent.py) — no
+    chat prompt to parse; `customer_id` is passed straight through as a
+    structured field."""
     runner = app.state.runner
     events = runner.run_async(
         input={
-            "messages": [
-                SystemMessage(content=SYSTEM_PROMPT),
-                HumanMessage(content=prompt),
-            ]
+            "requester": instance_id,
+            "customer_id": customer_id,
+            "last_result": None,
+            "done": False,
+            "final_message": None,
         },
         thread_id=instance_id,
         workflow_id=instance_id,
@@ -111,7 +115,7 @@ async def schedule_one(body: ScheduleOneBody) -> dict:
     replica can serve this and Dapr's placement service routes the workflow
     onto whichever agent ends up hosting it."""
     try:
-        await _schedule(body.instance_id, body.prompt)
+        await _schedule(body.instance_id, body.customer_id)
         return {"ok": True, "instance_id": body.instance_id}
     except Exception as e:  # noqa: BLE001
         log.warning("schedule %s failed: %s", body.instance_id, e)
@@ -121,12 +125,8 @@ async def schedule_one(body: ScheduleOneBody) -> dict:
 @app.post("/trigger")
 async def trigger(body: TriggerBody) -> dict:
     instance_id = f"customer-{body.customer_id}"
-    prompt = (
-        f"Drain customer {body.customer_id}'s account up to ${body.target}. "
-        f"Use $1 credits."
-    )
     try:
-        await _schedule(instance_id, prompt)
+        await _schedule(instance_id, body.customer_id)
     except Exception as e:  # noqa: BLE001
         log.warning("trigger %s failed: %s", instance_id, e)
         raise HTTPException(status_code=502, detail=str(e))

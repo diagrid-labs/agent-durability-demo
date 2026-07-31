@@ -37,7 +37,7 @@ Run the Bank Creditor demo (a LangGraph agent, durably executed via `diagrid.age
 
 ## 1. Provision Catalyst resources
 
-This demo needs both managed workflow **and** agent infrastructure at project-create time — they cannot be enabled on an existing project. `--enable-agent-infrastructure` originally provisioned the `agent-memory` state store dapr-agents used for chat memory; the LangGraph migration no longer reads that store directly (see the `AGENT_STATE_STORE` note below), but this hasn't been re-verified against a project created with `--enable-managed-workflow` alone — keep passing both flags until that's confirmed.
+This demo needs both managed workflow **and** agent infrastructure at project-create time — they cannot be enabled on an existing project. `--enable-agent-infrastructure` provisions the `agent-memory` state store, but the agent doesn't read it directly — LangGraph durability comes entirely from Dapr Workflow activity persistence. This hasn't been re-verified against a project created with `--enable-managed-workflow` alone — keep passing both flags until that's confirmed.
 
 ```bash
 diagrid login
@@ -61,7 +61,7 @@ diagrid project get bank-creditor-local   # ManagedWorkflowStore: enabled (+ age
 diagrid component list                 # agent-memory state.diagrid all app identities ready
 ```
 
-`AGENT_STATE_STORE` is no longer read by the agent code — the LangGraph migration dropped the separate chat-memory state store; durability now comes entirely from Dapr Workflow activity persistence in whatever store `--enable-managed-workflow` provisions. No env var needed for this.
+The agent doesn't read `agent-memory` directly — durability comes entirely from Dapr Workflow activity persistence in whatever store `--enable-managed-workflow` provisions. No env var needed for this.
 
 ## 2. Bring up local supporting services
 

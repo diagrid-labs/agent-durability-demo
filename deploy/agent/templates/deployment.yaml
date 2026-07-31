@@ -60,14 +60,6 @@ spec:
               value: {{ eq .Values.agent.llm.mode "stub" | ternary "true" "false" | quote }}
             - name: AGENT_MODEL
               value: {{ .Values.agent.llm.model | quote }}
-            - name: MAX_CONCURRENT_ACTIVITIES
-              value: {{ .Values.concurrency.maxActivities | quote }}
-            - name: MAX_CONCURRENT_ORCHESTRATIONS
-              value: {{ .Values.concurrency.maxOrchestrations | quote }}
-            - name: MAX_THREAD_POOL_WORKERS
-              value: {{ .Values.concurrency.threadPoolWorkers | quote }}
-            - name: AGENT_STATE_STORE
-              value: {{ .Values.stateStore.componentName | quote }}
             {{- if and (eq .Values.agent.llm.mode "real") .Values.agent.llm.apiKeySecret }}
             - name: OPENAI_API_KEY
               valueFrom:

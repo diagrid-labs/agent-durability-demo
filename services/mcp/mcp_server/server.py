@@ -3,7 +3,6 @@ import contextlib
 import json
 import logging
 import os
-import re
 import time
 from collections import deque
 from pathlib import Path
@@ -181,79 +180,68 @@ async def get_customer(customer_id: int) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def get_balance(customer_id: int) -> dict[str, Any]:
-    """Return the current balance and target for a customer."""
-    await chaos.maybe_delay()
-    row = await db.get_balance(customer_id)
-    if row is None:
-        raise ValueError(f"customer {customer_id} not found")
-    return row
-
-
-@mcp.tool()
-async def credit_account(
-    customer_id: int,
-    amount: float,
-    tx_id: str,
-    agent_id: str,
-    execution_run_id: int,
+async def credit_next(
+    requester: str = "", customer_id: int = 0, pod: str = ""
 ) -> dict[str, Any]:
-    """Idempotently credit `amount` to `customer_id` within `execution_run_id`.
-    `tx_id` must be deterministic across workflow replays (e.g.
-    `wf-{instance_id}-step-{n}`); the (execution_run_id, tx_id) pair is the
-    composite idempotency key — duplicates are absorbed and return the
-    existing balance with `applied=false`. Always pass through the
-    execution_run_id you received from get_next_task — never invent one."""
+    """Claim, evaluate, and (if needed) apply this customer's next pending
+    $1 credit — one MCP call per credit instead of the old four-call
+    get_next_task/get_balance/credit_account/report_done cycle.
+
+    `customer_id` is the account this workflow instance is permanently bound
+    to for the whole run. Pass `requester` (your stable workflow identity,
+    e.g. 'agent-007-r123') so replays claim the same in-flight credit instead
+    of popping a new one. `pod` is the agent pod hostname, recorded so the
+    heatmap pod-fleet view can map slots to pods — `customer_id` doubles as
+    the heatmap slot since each customer has exactly one owning instance.
+
+    Returns {done: true} once that customer's 100 credits are exhausted;
+    otherwise {done: false, applied, tx_id, balance, n}. `applied=false`
+    means the customer had already reached target (or the credit was a
+    replay duplicate) — no error, just nothing more to do this cycle."""
+    if customer_id and pod:
+        await slots.record(customer_id, pod)
+    task = await orch.next_task(
+        requester=requester or None, customer_id=customer_id or None
+    )
+    if task.get("done"):
+        return {"done": True}
+
+    tx_id = task["tx_id"]
+    execution_run_id = task["execution_run_id"]
+
+    await chaos.maybe_delay()
+    balance_row = await db.get_balance(customer_id)
+    if balance_row is None:
+        raise ValueError(f"customer {customer_id} not found")
+
+    if balance_row["balance"] >= task["target"]:
+        await orch.report_done(tx_id, False)
+        return {
+            "done": False,
+            "applied": False,
+            "tx_id": tx_id,
+            "balance": balance_row["balance"],
+            "n": task["n"],
+        }
+
     log_mcp(
         "req",
-        f"credit_account run={execution_run_id} cust={customer_id} +${amount} tx={tx_id}",
+        f"credit_next run={execution_run_id} cust={customer_id} +$1 tx={tx_id}",
     )
-    await chaos.maybe_delay()
     chaos.maybe_drop()
     result = await db.credit_account(
-        customer_id, amount, tx_id, agent_id, execution_run_id
+        customer_id, 1, tx_id, "banker", execution_run_id
     )
     tag = "applied" if result.get("applied") else "duplicate"
     log_mcp("res", f"{tag} · cust={customer_id} balance=${result.get('balance')}")
-    return result
-
-
-@mcp.tool()
-async def get_next_task(requester: str = "", pod: str = "") -> dict[str, Any]:
-    """Ask the orchestrator for the next pending credit task.
-
-    Pass `requester` (your stable workflow identity, e.g. 'slot-7-task-3-r123')
-    so replays return the same task instead of popping a new one. Returns
-    either {done: true} when the queue is drained, or
-    {done: false, customer_id, tx_id, target, n}.
-
-    `pod` is the agent pod hostname; recorded so the heatmap pod-fleet view
-    can map slots to pods."""
-    agent_slot = _slot_from_requester(requester)
-    if agent_slot is not None and pod:
-        await slots.record(agent_slot, pod)
-    return await orch.next_task(requester=requester or None)
-
-
-@mcp.tool()
-async def report_done(tx_id: str, applied: bool) -> dict[str, Any]:
-    """Notify the orchestrator that the task identified by tx_id is complete.
-    `applied=true` if a credit_account call succeeded, `applied=false` if the
-    customer was already at target."""
-    return await orch.report_done(tx_id, applied)
-
-
-_SLOT_FROM_REQUESTER = re.compile(r"^agent-(\d+)-task-")
-
-
-def _slot_from_requester(requester: str | None) -> int | None:
-    """Extract heatmap slot N from `agent-NNN-task-K-r<run>` requester IDs.
-    Returns None for requester formats that don't carry a slot (legacy
-    callers, ad-hoc test scripts)."""
-    if not requester:
-        return None
-    m = _SLOT_FROM_REQUESTER.match(requester)
-    return int(m.group(1)) if m else None
+    await orch.report_done(tx_id, bool(result.get("applied")))
+    return {
+        "done": False,
+        "applied": bool(result.get("applied")),
+        "tx_id": tx_id,
+        "balance": result.get("balance"),
+        "n": task["n"],
+    }
 
 
 # --- Chaos control surface (orchestrator-only; restrict via NetworkPolicy later) ---
@@ -491,8 +479,8 @@ def build_app() -> FastAPI:
             await broadcaster.remove(ws)
 
     # Replenisher runs here (singleton); /schedule-one on the agent is stateless.
+    # One workflow instance per customer — agent count is always == customers.
     class AgentSpawnBody(BaseModel):
-        agents: int = Field(default=100, ge=1, le=500)
         customers: int = Field(default=10, ge=1, le=100)
         credits_per_customer: int = Field(default=100, ge=1, le=1000)
         target: int = Field(default=200, ge=1, le=10_000)
@@ -500,7 +488,6 @@ def build_app() -> FastAPI:
     @app.post("/agent/spawn")
     async def agent_spawn(body: AgentSpawnBody) -> dict[str, Any]:
         return await replenisher.start(
-            agents=body.agents,
             customers=body.customers,
             credits_per_customer=body.credits_per_customer,
             target=body.target,

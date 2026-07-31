@@ -27,8 +27,9 @@ mcp:
 # In Catalyst mode (Cloud or Self-Hosted), the component is provisioned in
 # the Catalyst project via `diagrid kv create` instead — set `create: false`
 # so this chart doesn't try to render an in-cluster CRD that would conflict.
-# `componentName` stays meaningful in both modes: it's the env var
-# (`AGENT_STATE_STORE`) the agent uses to pick a state store by name.
+# `componentName` is the CRD's metadata.name when `create: true` (see
+# templates/component-state.yaml); LangGraph durability doesn't read this
+# store directly, it comes entirely from Dapr Workflow activity persistence.
 stateStore:
   create: false
   componentName: agent-memory
@@ -48,13 +49,6 @@ agent:
     model: gpt-4o-mini
     # Name of a Secret with key OPENAI_API_KEY. Only required when mode=real.
     apiKeySecret: ""
-
-# Concurrency knobs for the durabletask runtime. Defaults keep 100 in-flight
-# workflows responsive while leaving headroom on a 2-vCPU node.
-concurrency:
-  maxActivities: 200
-  maxOrchestrations: 200
-  threadPoolWorkers: 128
 
 resources:
   requests:
