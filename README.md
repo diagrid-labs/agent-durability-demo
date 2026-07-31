@@ -35,6 +35,7 @@ The agent reaches its Postgres-backed tools (`get_balance`, `credit_account`, et
   - [Catalyst local dev](docs/CATALYST.md) — `diagrid dev run` on your laptop
 - **[Demo flow](docs/DEMO_FLOW.md)** — presenter script for running the live demo
 - **[Troubleshooting](docs/TROUBLESHOOTING.md)** — common failures across all deploy paths
+- **[Local Dapr (no Catalyst)](docs/LOCAL_DAPR.md)** — *not a deployment path* — a debugging recipe for testing Dapr Workflow's own durability in isolation from Catalyst's hosted backend
 
 ## Databases
 
@@ -69,5 +70,6 @@ The agent reaches its Postgres-backed tools (`get_balance`, `credit_account`, et
     ├── CATALYST.md             # Catalyst local bring-up (`diagrid dev run`)
     ├── CATALYST_SELF_HOSTED.md # Catalyst Self-Hosted in your cluster
     ├── DEMO_FLOW.md            # Presenter script for the live demo
-    └── TROUBLESHOOTING.md      # Common failures across all deploy paths
+    ├── TROUBLESHOOTING.md      # Common failures across all deploy paths
+    └── LOCAL_DAPR.md           # Debug recipe: plain Dapr, no Catalyst (not a deploy path)
 ```
