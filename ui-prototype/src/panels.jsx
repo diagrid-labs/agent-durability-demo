@@ -121,8 +121,7 @@ function ChaosPanel({ feed, state }) {
 function PodFleet({ state }) {
   const podsRaw = (state.chaos && state.chaos.pods) || [];
   const victim = state.chaos && state.chaos.victim;
-  // Highest workflow count first so the most-loaded pod (the next kill
-  // target) is always at the top of the list.
+  // Most-loaded pod (next kill target) first.
   const pods = podsRaw.slice().sort((a, b) =>
     (b.workflow_count || 0) - (a.workflow_count || 0) || a.pod.localeCompare(b.pod)
   );

@@ -1,21 +1,16 @@
 /* eslint-disable */
 /**
- * Telemetry — live mode.
- *
- * Polls the MCP server's orchestrator + customer + mcp-log endpoints every
- * `pollMs` (default 500ms) and projects responses into the same state shape
- * the UI components consume. The chaos buttons that map to real server
- * endpoints (`dropTx`, `latencyJitter`) call them; the pod-level chaos
- * buttons (`killRandom`, `killAZ`) animate client-side only
- * since chaos-mesh is out of scope for the demo.
+ * Telemetry — live mode. Polls orchestrator/customer/mcp-log endpoints and
+ * projects responses into UI state. `dropTx`/`latencyJitter` call real
+ * server endpoints; `killRandom`/`killAZ` also animate client-side (no
+ * chaos-mesh in this demo).
  */
 
 const TARGET_BAL = 200;
 const START_BAL  = 100;
 
-// Same origin when served from the FastAPI app at /. Override by setting
-// window.API_BASE before this file loads (e.g. when opening the HTML from
-// file:// against an MCP server on a different port).
+// Same origin when served from FastAPI at /. Override via window.API_BASE
+// (e.g. opening the HTML from file:// against a different port).
 const API_BASE = (typeof window !== 'undefined' && window.API_BASE) || '';
 
 function nowMs() { return performance.now(); }
@@ -40,11 +35,9 @@ function createTelemetry(initial) {
   const cfg = {
     agentCount: 10,
     customerCount: 10,
-    // Slow poll for state reconciliation (counters, mcp-log, customer
-    // enrichment). Per-tx balance updates arrive over WebSocket so the heatmap
-    // animates immediately without waiting for the next poll.
+    // Slow poll for reconciliation; per-tx updates arrive over WebSocket instead.
     tickMs: 1500,
-    mcpLatencyMs: 80,    // unused server-side now; kept for tweaks-panel compat
+    mcpLatencyMs: 80,    // unused server-side; kept for tweaks-panel compat
     ...(initial || {}),
   };
 
@@ -60,17 +53,14 @@ function createTelemetry(initial) {
     counters: { txProcessed: 0, txLost: 0, restarts: 0, mcpQueries: 0 },
     chaos: {
       activeWave: null, azDown: null, latencyUntil: 0, dropNext: 0,
-      // Pod fleet state from /chaos/pods. `victim` is the pod we'll target
-      // on the next Kill click — picked as the pod with the most workflows
-      // each poll so the label reflects the biggest possible blast radius.
+      // Pod fleet from /chaos/pods. `victim` = pod with the most workflows,
+      // for the biggest-blast-radius Kill click.
       pods: [],
       victim: null,
-      // Operating environment from /chaos/infra — AKS nodepools and nodes.
+      // AKS nodepools/nodes from /chaos/infra.
       nodepools: [],
       nodes: [],
-      // `impactedZones[zone] = unix-ms-until` — when this is in the future,
-      // the UI pulses nodes/nodepools in that zone to show recent AZ chaos.
-      // Populated by WS `zone-state` events and reconciled from polls.
+      // impactedZones[zone] = unix-ms-until; pulses that zone's nodes in the UI.
       impactedZones: {},
     },
     mcp: { connected: false, lines: [] },
@@ -115,9 +105,8 @@ function createTelemetry(initial) {
 
   function distributeActivity(newTx) {
     if (newTx <= 0) return;
-    // Each agent is permanently bound to the customer sharing its index —
-    // this is a client-side fallback for the (primary) WS-driven path, so
-    // pair agent i with customer i rather than picking either independently.
+    // Client-side fallback for the WS-driven path — agent i is always
+    // bound to customer i, so pair them directly.
     const alive = state.agents.filter(a => a.status === 'alive');
     if (alive.length === 0) return;
     const t = nowMs();
@@ -133,8 +122,7 @@ function createTelemetry(initial) {
 
   async function pollOnce() {
     if (paused) return;
-    // Clock is a run-scoped session timer — only advances while a run is
-    // active. Reset/idle leaves it at its last value (zero on first boot).
+    // Clock only advances while a run is active.
     if (state.run.active) {
       state.clock = nowMs() - state.startedAt;
     }
@@ -163,7 +151,7 @@ function createTelemetry(initial) {
       state.chaos.azDown = null;
     }
 
-    // Agent status is best-effort — failure just means the worker isn't up.
+    // Best-effort — failure just means the worker isn't up.
     try {
       const agent = await getJSON('/agent/status');
       state.run.reachable = true;
@@ -177,8 +165,7 @@ function createTelemetry(initial) {
       state.run.error = err.message || String(err);
     }
 
-    // Drive heatmap idle/alive from run lifecycle. Chaos states (dead /
-    // restarting) take priority — don't overwrite mid-recovery.
+    // Chaos states (dead/restarting) take priority — don't overwrite mid-recovery.
     const desired = state.run.active ? 'alive' : 'idle';
     for (const a of state.agents) {
       if (a.status !== 'dead' && a.status !== 'restarting') {
@@ -196,8 +183,7 @@ function createTelemetry(initial) {
       ]);
       state.chaos.nodepools = Array.isArray(infraResp.nodepools) ? infraResp.nodepools : [];
       state.chaos.nodes = Array.isArray(infraResp.nodes) ? infraResp.nodes : [];
-      // Reconcile impacted-zone TTLs from the server in case we missed the
-      // initial WS event (e.g. UI loaded mid-impact, or page refreshed).
+      // Reconcile in case we missed the initial WS event (e.g. page refreshed).
       const serverImpacts = infraResp.impacted_zones || {};
       const merged = { ...state.chaos.impactedZones };
       for (const [zone, info] of Object.entries(serverImpacts)) {
@@ -207,15 +193,11 @@ function createTelemetry(initial) {
           if (!merged[zone] || merged[zone] < until) merged[zone] = until;
         }
       }
-      // Drop expired entries.
       for (const z of Object.keys(merged)) {
         if (merged[z] <= Date.now()) delete merged[z];
       }
       state.chaos.impactedZones = merged;
-      // Refresh fleet state and pick the next victim: the pod currently
-      // hosting the most workflows. Most visceral kill — the audience sees
-      // the biggest possible cell wave go dark on click. Tiebreak by pod
-      // name so the label is stable across polls.
+      // Victim = pod hosting the most workflows; tiebreak by name for a stable label.
       const pods = Array.isArray(podsResp.pods) ? podsResp.pods : [];
       state.chaos.pods = pods;
       state.chaos.victim = pods.length
@@ -224,8 +206,7 @@ function createTelemetry(initial) {
             return dc !== 0 ? dc : a.pod.localeCompare(b.pod);
           })[0]
         : null;
-      // Zone roll-up for the AZ kill button: aggregate workflow counts and
-      // pod counts per zone; pick the busiest zone as the next victim.
+      // Aggregate per zone; busiest zone is the AZ-kill victim.
       const byZone = new Map();
       for (const p of pods) {
         if (!p.zone) continue;
@@ -242,7 +223,7 @@ function createTelemetry(initial) {
 
       state.mcp.connected = true;
 
-      // Customers — real balances from Postgres
+      // Real balances from Postgres
       ensureCustomerScaffold(customers.length || cfg.customerCount);
       for (const row of customers) {
         const idx = (row.id ?? row.customer_id ?? 1) - 1;
@@ -260,32 +241,28 @@ function createTelemetry(initial) {
 
       if (status.execution_run_id != null) {
         state.run.executionRunId = Number(status.execution_run_id);
-        // Tag the WS filter so transactions from the in-progress run apply
-        // and stragglers from a just-reset run are ignored.
+        // Filters WS tx so stragglers from a just-reset run are ignored.
         wsExpectedRun = state.run.executionRunId;
       }
 
-      // Counters — derived from orchestrator aggregates
       const applied = Number(status.applied_total ?? 0);
       const delta = firstStatus ? 0 : Math.max(0, applied - lastApplied);
       firstStatus = false;
       lastApplied = applied;
       state.counters.txProcessed = applied;
       state.counters.mcpQueries = Number(status.mcp_queries ?? mcpLog.queries ?? 0);
-      // tx lost stays 0 — the durability story. restarts incremented above by chaos theater.
+      // tx lost stays 0 — the durability story.
 
       distributeActivity(delta);
 
-      // MCP log — replace wholesale; server already keeps a 60-entry ring.
-      // Map server's monotonic ts directly into UI clock space.
+      // Server already keeps a 60-entry ring; replace wholesale.
       state.mcp.lines = (mcpLog.lines || []).slice().reverse().map(l => ({
         id: l.id, kind: l.kind, text: l.text, ts: l.ts,
       }));
-      // Server may emit more than 60; keep the same cap as the simulator did.
       if (state.mcp.lines.length > 60) state.mcp.lines.length = 60;
     } catch (err) {
       state.mcp.connected = false;
-      // Don't spam the log on repeated failures — only the first one per outage
+      // Only log the first failure per outage.
       if (!state.mcp.lines.length || state.mcp.lines[0].kind !== 'sys' ||
           !state.mcp.lines[0].text.startsWith('disconnected')) {
         pushMcpLine('sys', `disconnected — ${err.message || err}`);
@@ -306,17 +283,15 @@ function createTelemetry(initial) {
   }
 
   // --- WebSocket push channel ---
-  // Server LISTENs on pg_notify('tx_committed') and forwards each row to
-  // every connected client as `{type:'tx', execution_run_id, tx_id,
-  // customer_id, amount, agent_id, created_at}`. Reconnect with backoff;
-  // the polling loop below repairs any state drift if frames are missed.
+  // Server forwards each pg_notify('tx_committed') row as `{type:'tx', ...}`.
+  // Reconnects with backoff; the poll loop repairs any drift from missed frames.
   let ws = null;
   let wsRetryMs = 200;
   let wsExpectedRun = null;
   function applyTx(msg) {
     if (msg.execution_run_id != null && wsExpectedRun != null &&
         Number(msg.execution_run_id) !== wsExpectedRun) {
-      return; // stale tx from a prior run; ignore
+      return; // stale tx from a prior run
     }
     const cid = Number(msg.customer_id);
     const idx = cid - 1;
@@ -329,8 +304,7 @@ function createTelemetry(initial) {
       c.balance = next;
       c.txCount = (c.txCount || 0) + 1;
     }
-    // Each customer has exactly one permanently-bound agent (same index) —
-    // animate that agent directly rather than relying on a separate slot id.
+    // Each customer's agent shares its index.
     const agent = (idx >= 0 && idx < state.agents.length) ? state.agents[idx] : null;
     if (agent) {
       agent.txCount = (agent.txCount || 0) + 1;
@@ -355,8 +329,7 @@ function createTelemetry(initial) {
         if (!msg || !msg.type) return;
         if (msg.type === 'tx') {
           applyTx(msg);
-          // Each tx implicitly proves that customer's agent is alive again —
-          // if it had been marked dead by a pod-kill, relight it now.
+          // A tx proves that customer's agent is alive — relight if marked dead.
           const idx = Number(msg.customer_id) - 1;
           const a = state.agents[idx];
           if (a && a.status !== 'alive') {
@@ -404,7 +377,7 @@ function createTelemetry(initial) {
     isPaused() { return paused; },
     setPaused(b) { paused = !!b; emit(); },
     async reset() {
-      // Stop replenisher first so stragglers drain before we reset balances.
+      // Stop replenisher first so stragglers drain before resetting balances.
       try { await postJSON('/agent/stop'); } catch (_e) {}
       await new Promise(r => setTimeout(r, 400));
       try {
@@ -435,11 +408,8 @@ function createTelemetry(initial) {
 
     // Pod-level chaos — visual only (chaos-mesh out of scope)
     killRandom(_n) {
-      // Kills the currently-selected `victim` pod. The UI shows the
-      // workflow count of that specific pod on the button label, and on
-      // click we send the exact pod name so what dies matches the label.
-      // The visual cell-darkening is now driven by the server's WS
-      // `slot-state="dead"` broadcast (not random client-side flashes).
+      // Kills the exact `victim` pod shown on the button label; cell-darkening
+      // is driven by the server's WS `slot-state="dead"` broadcast.
       const victim = state.chaos.victim;
       const t = nowMs();
       state.chaos.activeWave = { startedAt: t, duration: 1500, level: 0.3 };
@@ -449,10 +419,8 @@ function createTelemetry(initial) {
       postJSON('/chaos/pod-kill', body).catch(() => {});
     },
     killAZ() {
-      // Real AZ outage: server deletes every agent pod whose node lives in
-      // the busiest zone. The slot-state="dead" WS frame darkens the exact
-      // cells that lived on those pods; surviving pods backfill via the
-      // replenisher's /schedule-one calls.
+      // Server deletes every agent pod in the busiest zone; surviving pods
+      // backfill via the replenisher's /schedule-one calls.
       const z = state.chaos.zoneVictim;
       const t = nowMs();
       state.chaos.activeWave = { startedAt: t, duration: 1500, level: 0.5 };
@@ -469,9 +437,8 @@ function createTelemetry(initial) {
       };
       try {
         const r = await postJSON('/agent/spawn', body);
-        // Start = fresh run. Wipe per-slot counters so the heatmap doesn't
-        // carry forward the previous run's numbers (user wouldn't expect a
-        // Start click to look like a continuation).
+        // Fresh run — wipe per-slot counters so the heatmap doesn't carry
+        // forward the previous run.
         rebuildAgents();
         state.run.active = true;
         state.run.target = body.customers;

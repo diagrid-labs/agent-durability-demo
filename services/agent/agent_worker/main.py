@@ -14,18 +14,14 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 log = logging.getLogger("main")
 
 DAPR_HTTP_PORT = os.environ.get("DAPR_HTTP_PORT", "3500")
-# `/healthz/outbound` not `/healthz`: the latter requires daprd to have
-# discovered our app on port 8000, which we haven't bound yet.
+# /healthz requires daprd to have discovered our app on port 8000 already.
 DAPR_HEALTH_URL = f"http://127.0.0.1:{DAPR_HTTP_PORT}/v1.0/healthz/outbound"
 DAPR_READY_TIMEOUT_S = int(os.environ.get("DAPR_READY_TIMEOUT_S", "120"))
 
 
 async def wait_for_dapr() -> None:
-    """Poll the daprd sidecar's healthz endpoint until it returns 200.
-
-    Without this, the Dapr workflow runtime races daprd's gRPC bind on
-    :50001 and dies after a 10-second timeout, leaving it in a broken state.
-    """
+    """Poll daprd's healthz until 200 — otherwise the workflow runtime races
+    daprd's gRPC bind and dies after a 10s timeout."""
     deadline = asyncio.get_event_loop().time() + DAPR_READY_TIMEOUT_S
     async with httpx.AsyncClient() as client:
         while True:
@@ -45,8 +41,7 @@ async def wait_for_dapr() -> None:
 
 @contextlib.asynccontextmanager
 async def lifespan(app_: FastAPI):
-    # Catalyst mode injects DAPR_HTTP_ENDPOINT pointing at a remote sidecar —
-    # there's no local daprd to wait on. Only poll in local-sidecar mode.
+    # Catalyst mode has no local daprd to wait on — only poll in sidecar mode.
     if not os.environ.get("DAPR_HTTP_ENDPOINT"):
         await wait_for_dapr()
     runner = build_runner()
@@ -76,19 +71,10 @@ class ScheduleOneBody(BaseModel):
 
 
 async def _schedule(instance_id: str, customer_id: int) -> None:
-    """Durably schedule one graph run under `instance_id` and return as soon
-    as Catalyst confirms it's been accepted — mirrors the crash-recovery
-    quickstart's `/run` handler, which returns on the first `workflow_started`
-    event rather than waiting for the graph to finish.
-
-    `workflow_id` (not `thread_id`) is what becomes the actual Dapr workflow
-    instance ID that `/status`, `/agent/instances/{id}/terminate`, and
-    `/agent/instances/{id}/purge` key off of — DaprWorkflowGraphRunner
-    defaults it to a random `graph-<thread_id>-<uuid>` string otherwise.
-
-    The initial state is the fixed-size BankerState shape (agent.py) — no
-    chat prompt to parse; `customer_id` is passed straight through as a
-    structured field."""
+    """Schedule one graph run under `instance_id`, returning as soon as
+    Catalyst confirms acceptance (first `workflow_started` event) rather than
+    waiting for the graph to finish. `workflow_id` is what `/status`,
+    `/terminate`, and `/purge` key off of — otherwise a random UUID."""
     runner = app.state.runner
     events = runner.run_async(
         input={
@@ -109,11 +95,8 @@ async def _schedule(instance_id: str, customer_id: int) -> None:
 
 @app.post("/schedule-one")
 async def schedule_one(body: ScheduleOneBody) -> dict:
-    """Stateless workflow scheduler. The MCP-side replenisher posts here for
-    each workflow it wants to start; this pod's local Dapr sidecar handles
-    the schedule_new_workflow gRPC call. No in-process state — any agent
-    replica can serve this and Dapr's placement service routes the workflow
-    onto whichever agent ends up hosting it."""
+    """Stateless workflow scheduler — any agent replica can serve this;
+    Dapr's placement service routes the workflow to whichever agent hosts it."""
     try:
         await _schedule(body.instance_id, body.customer_id)
         return {"ok": True, "instance_id": body.instance_id}

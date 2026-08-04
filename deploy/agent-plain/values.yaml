@@ -1,0 +1,49 @@
+image:
+  repository: alicejgibbons/bank-creditor-agent-plain
+  tag: "0.1.0"
+  # Always-pull so demo iteration on the same tag picks up freshly pushed
+  # images without bumping the tag. Switch to IfNotPresent for production.
+  pullPolicy: Always
+
+# Unlike the Dapr-backed agent chart, more replicas here don't add
+# resilience — a killed pod's in-memory tasks are just gone, no other
+# replica can see or resume them. Kept at 2 anyway so pod-kill/AZ-kill chaos
+# stays visually/structurally consistent with the other demo.
+replicaCount: 2
+
+service:
+  port: 8000
+
+mcp:
+  # In-cluster MCP Service URL, called directly — no Dapr, no Catalyst proxy.
+  # Port 80 is the mcp chart's Service port (deploy/mcp/values.yaml's
+  # service.port), NOT the container's port 8000 — the Service doesn't listen
+  # on 8000 at all. Must include the trailing /mcp/ path (FastMCP's mount
+  # point).
+  url: http://mcp:80/mcp/
+
+logLevel: INFO
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 384Mi
+  limits:
+    cpu: 1500m
+    memory: 768Mi
+
+# Reuses the same node-label scheme as the Dapr-backed demo — node labels
+# are cluster-scoped, not namespace-scoped, so this works unmodified even
+# though this chart deploys into a different namespace.
+nodeSelector:
+  bank-creditor.role: agents
+
+tolerations: []
+
+# Real Azure-AZ spread for the AZ-outage chaos story. AKS sets this label
+# automatically on each node based on its `--zones` membership.
+topologySpread:
+  enabled: true
+  maxSkew: 1
+  topologyKey: topology.kubernetes.io/zone
+  whenUnsatisfiable: DoNotSchedule

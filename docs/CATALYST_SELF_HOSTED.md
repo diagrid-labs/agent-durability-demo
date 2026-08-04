@@ -7,6 +7,12 @@ Use this path when you want:
 - No per-app-id RPS limits (unlike Cloud Catalyst)
 - Everything on a single AKS cluster
 
+> **This walkthrough is namespace/project-agnostic by design.** The cluster also runs a
+> non-Catalyst comparison (`bank-creditor-plain`, no Dapr at all — see its own Helm chart at
+> `deploy/agent-plain/`), built from this same recipe with a different namespace/project name.
+> A future clone just needs a new namespace name, a new project name in step 4, and the values
+> overrides in steps 4/6/7 pointed at that namespace — no chart or code changes required.
+
 ## Prerequisites
 
 - A K8s cluster on a recent version (AKS, EKS, GKE, k3s — anything conformant)
@@ -75,20 +81,23 @@ kubectl -n shared-kafka delete pod shared-kafka-controller-1   # wait for Runnin
 kubectl -n shared-kafka delete pod shared-kafka-controller-2
 ```
 
-## 4. Create the project + app ID
+## 4. Create the project + register the agent
 
 `--enable-agent-infrastructure` is **required at create time** — it auto-provisions the `agent-memory` state store the workflow runtime expects:
 
 ```bash
-diagrid project create resiliency-demo \
+diagrid project create resiliency-demo-langgraph \
   --region my-sh-region \
   --enable-managed-workflow \
   --enable-agent-infrastructure \
+  --global-appid-max-body-size 16Mi \
   --use --wait
 
-diagrid appid create bank-agent-creditor --wait
-diagrid appid list   # should show ready
+diagrid agent create bank-agent-creditor --wait
+diagrid agent list   # should show ready
 ```
+
+Use `diagrid agent create`, not `diagrid appid create` — `Agent` is Catalyst's purpose-built resource type for AI agents (LangGraph, CrewAI, etc.), matching the [official quickstart](https://docs.diagrid.io/getting-started/quickstarts/ai-agents/?agentframework=langgraph). It provisions a same-named, fully-functional `AppIdentity` under the hood (still queryable via `diagrid appid get bank-agent-creditor`, annotated `cra.diagrid.io/managed_by: .../Agent/bank-agent-creditor/<id>`) plus an `<name>-agentcfg-<hash>` config resource that the `diagrid.agent.langgraph` SDK's `AgentRegistryMixin` writes LangGraph node/framework metadata into at runtime (`diagrid/agent/core/metadata/metadata.py`'s `AgentRegistryAdapter`) — that's what makes the App Graph show rich per-node detail instead of a generic app box. That metadata self-registration is real, but it still requires the underlying identity (and its Dapr API token) to already exist and be authenticated — `diagrid agent create` is the one-time step that provisions it; nothing creates the identity itself from inside the running pod.
 
 Save the project ID (e.g. `prj1548627`) for the hostAliases step. There's no separate app-id for the MCP server anymore — registering it as a Catalyst `MCPServer` resource (step 8) provisions its own implicit app-id automatically.
 
@@ -116,7 +125,7 @@ Find the gateway ClusterIP + wildcard:
 ```bash
 GATEWAY_IP=$(kubectl -n cra-agent get svc gateway-envoy -o jsonpath='{.spec.clusterIP}')
 WILDCARD=$(diagrid region get my-sh-region -o json | jq -r '.spec.ingress.wildcardDomain')
-PRJ=$(diagrid project get resiliency-demo -o json | jq -r '.metadata.id')
+PRJ=$(diagrid project get resiliency-demo-langgraph -o json | jq -r '.metadata.id')
 echo "$GATEWAY_IP / $WILDCARD / $PRJ"
 ```
 
@@ -176,20 +185,20 @@ The agent reaches its Postgres-backed tools (`get_balance`, `credit_account`, `g
 
 ```bash
 diagrid mcpserver create bank-postgres-mcp \
-  --project resiliency-demo \
+  --project resiliency-demo-langgraph \
   --url http://mcp.bank-creditor.svc.cluster.local/mcp/ \
   --wait
 
 diagrid mcpserver access grant bank-postgres-mcp \
-  --project resiliency-demo \
+  --project resiliency-demo-langgraph \
   --caller bank-agent-creditor \
-  --allow-tools get_balance,credit_account,get_next_task,report_done \
+  --allow-tools credit_next \
   --wait
 ```
 
 This must come **after** the `mcp` chart is installed (step 7) — Catalyst validates the upstream URL when registering. `bank-postgres-mcp` becomes its own implicit app-id automatically; you don't create one for it separately.
 
-If the agent's tool calls come back `403 Forbidden`, the grant above didn't take — re-run `diagrid mcpserver access get bank-postgres-mcp --project resiliency-demo` to confirm `bank-agent-creditor` is listed with all four tools.
+If the agent's tool calls come back `403 Forbidden`, the grant above didn't take — re-run `diagrid mcpserver access get bank-postgres-mcp --project resiliency-demo-langgraph` to confirm `bank-agent-creditor` is listed with `credit_next`.
 
 ## 9. Verify
 

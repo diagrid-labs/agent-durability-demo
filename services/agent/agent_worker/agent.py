@@ -12,11 +12,8 @@ from .stub_llm import StubLLM
 
 
 class BankerState(TypedDict):
-    """Fixed-size state — every field is overwritten each step, none grow.
-
-    See stub_llm.py's module docstring for why this matters: a MessagesState-
-    style accumulating transcript blows past Catalyst's 4MB gRPC payload
-    ceiling well before 100 credits."""
+    """Fixed-size state, overwritten each step — a growing MessagesState
+    would blow Catalyst's 4MB gRPC payload ceiling (see stub_llm.py)."""
 
     requester: str
     customer_id: int
@@ -27,14 +24,10 @@ class BankerState(TypedDict):
 
 @tool
 async def credit_next(requester: str, customer_id: int) -> dict[str, Any]:
-    """Claim, evaluate, and (if needed) apply this customer's next $1 credit
-    — one MCP call per credit. `customer_id` is the account this workflow
-    instance is permanently bound to for the whole run; pass `requester` (your
-    stable workflow identity) every call so replays claim the same in-flight
-    credit instead of popping a new one.
-
-    Returns {done: true} once that customer's 100 credits are exhausted,
-    otherwise {done: false, applied, tx_id, balance, n}."""
+    """Claim and apply this customer's next $1 credit in one MCP call.
+    `requester` is this workflow's stable identity, so replays reclaim the
+    same in-flight credit. Returns {done: true} once 100 credits are used,
+    else {done: false, applied, tx_id, balance, n}."""
     return await call_tool(
         "credit_next",
         {
@@ -45,13 +38,25 @@ async def credit_next(requester: str, customer_id: int) -> dict[str, Any]:
     )
 
 
+# Metadata-only, for Catalyst's LangGraphMapper — call_tools invokes
+# credit_next directly. The mapper's fallback tool scan requires
+# callable(candidate), but a StructuredTool instance isn't callable, so the
+# raw tool object gets silently rejected; a plain function proxy passes.
+def _credit_next_metadata_proxy(*_args, **_kwargs):
+    raise NotImplementedError("metadata-only stand-in for Catalyst's Agent UI — never invoked")
+
+
+_credit_next_metadata_proxy.name = credit_next.name
+_credit_next_metadata_proxy.description = credit_next.description
+_credit_next_metadata_proxy.args = credit_next.args
+
+TOOLS = [_credit_next_metadata_proxy]
+
+
 def _build_model() -> Any:
     if os.environ.get("STUB_LLM", "true").lower() != "false":
         return StubLLM()
-    # Real-mode (STUB_LLM=false) isn't supported under this fixed-size state
-    # shape — a real chat model needs an actual conversation to reason over,
-    # which is exactly the unbounded-growth pattern this design avoids.
-    # Restoring MessagesState would bring back the 4MB gRPC ceiling.
+    # Real mode needs a message transcript to reason over; BankerState has none.
     raise RuntimeError(
         "STUB_LLM=false is not supported: BankerState has no message "
         "transcript for a real chat model to reason over."
@@ -72,17 +77,10 @@ async def _call_tools_impl(state: BankerState) -> dict:
     return {"last_result": result}
 
 
-
-# diagrid.agent.langgraph's node registry (as of diagrid[langgraph]==0.4.2)
-# only extracts a node's *sync* callable (LangGraph's internal
-# RunnableCallable.func) to hand to the Dapr activity — an `async def` node
-# has `.func is None` (the coroutine function lives at `.afunc` instead), so
-# it's silently never registered and the workflow fails at the first node
-# with "not found in registry". Registering plain `def` wrappers that return
-# the (unawaited) coroutine keeps LangGraph's node-type detection on the sync
-# path while still giving the Dapr activity a coroutine to await — its
-# executor already has an `asyncio.iscoroutine(result)` branch for exactly
-# this shape.
+# diagrid.agent.langgraph only registers a node's *sync* callable (`.func`);
+# `async def` nodes have `.func is None` and silently fail to register. These
+# plain-def wrappers return the coroutine unawaited — the Dapr executor
+# awaits it via its `asyncio.iscoroutine(result)` branch.
 def call_model(state: BankerState):
     return _call_model_impl(state)
 
@@ -106,10 +104,7 @@ def build_graph():
 
 
 def build_runner() -> DaprWorkflowGraphRunner:
-    # DaprWorkflowGraphRunner defaults max_steps=100 (its per-instance graph-step
-    # cap) — each credit now costs one (agent, tools) node-pair = 2 graph steps
-    # (decide, credit_next), so 100 credits × 2 steps = 200, plus headroom for
-    # the final done-check and any chaos-driven retries.
+    # 100 credits × 2 steps (decide, credit_next) = 200; 400 gives headroom.
     return DaprWorkflowGraphRunner(
         graph=build_graph(),
         name="banker",

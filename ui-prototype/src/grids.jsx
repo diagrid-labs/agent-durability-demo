@@ -13,9 +13,8 @@ function AgentsGrid({ state }) {
     return m;
   }, [state.activity]);
 
-  // No memo — `state.agents` is mutated in place (the WS slot-state handler
-  // flips agent.status without replacing the array). Memoizing on the array
-  // reference would freeze the counts. The loop is 10 elements, trivial.
+  // No memo — agents are mutated in place, so memoizing on the array
+  // reference would freeze these counts. 10 elements, trivial either way.
   let alive = 0, restarting = 0, dead = 0, idle = 0;
   for (const a of agents) {
     if (a.status === 'alive') alive++;
@@ -56,17 +55,13 @@ function AgentsGrid({ state }) {
 }
 
 function AgentRow({ a, customer, recent }) {
-  // Progress is derived from the bound account's actual balance — not a
-  // separately-incremented counter — so it can never exceed 100 (balance is
-  // itself capped at TARGET_BAL by credit_account's idempotency) and can't
-  // drift from double-counted WS events.
+  // Derived from the account's actual balance, not a counter — can't
+  // exceed 100 or drift from double-counted WS events.
   const rawCredited = customer ? (customer.balance - START_BAL) : (a.txCount || 0);
   const credited = Math.max(0, Math.min(100, Math.round(rawCredited)));
   const pct = credited / 100;
 
-  // One status axis drives the whole row's color — no separate text label
-  // (a long-running single workflow instance isn't meaningfully "idle" or
-  // "alive" as a category the way a pool of short-lived workers was).
+  // One status axis drives the row's color; no separate text label.
   let color = 'var(--green)', cardBg = 'var(--green-soft)', cardBd = '#c8e6d4';
   if (a.status === 'idle') {
     color = 'var(--fg-3)'; cardBg = '#f4f5f7'; cardBd = '#e3e6eb';

@@ -1,45 +1,31 @@
 """Centralized workflow replenisher.
 
-Spawns exactly one long-running workflow instance per customer at the start
-of a run — each instance is permanently bound to one account and loops
-internally through all of that account's credits (via the orchestrator's
-per-customer queue) until it reaches target. There's no shared queue to
-drain and no concurrency pool to maintain: once the 10 instances are
-scheduled, this module just polls the orchestrator for completion.
+Spawns one long-running instance per customer at run start, each permanently
+bound to that account and looping internally through its credits until
+target. No shared queue or concurrency pool to maintain — once the 10
+instances are scheduled, this module just polls for completion.
 
-Previously this ran a continuous deficit-spawn loop (~100 concurrent "slots",
-each cycling through many short-lived one-credit-then-terminate instances) —
-that model is gone now that one instance owns an account for the whole run.
-It also used to terminate+purge+reschedule ("restart-in-place") orphaned
-instances under the same instance_id. That's actively wrong under this model:
-purging wipes a workflow's durable history, so restarting-in-place would
-silently reset a customer's progress to $100 instead of letting Dapr's own
-durable-task engine replay the instance from where it left off — which it
-already does on its own when a host dies, with no action needed here.
+Never restarts-in-place: purging a workflow wipes its durable history, so
+resuming under the same instance_id would reset progress to $100. Dapr's own
+durable-task engine already replays a dead host's instances on its own.
 
-`terminate` itself is still needed, though — `stop()` (and `start()`, to clean
-up stragglers from a previous run) call the agent's own
-`/agent/instances/{id}/terminate` endpoint for every instance this module
-scheduled. Without it, "Stop run" only cancelled this module's own polling
-loop and the 10 real workflow instances kept looping and crediting accounts
-regardless of what the UI showed.
+`terminate` is still needed for `stop()`/`start()` cleanup — without it, "Stop
+run" only cancels this module's polling loop and the real instances keep
+crediting. But `terminate_workflow()` alone is unreliable: Catalyst marks an
+instance `terminated` immediately while the underlying orchestration keeps
+crediting for tens of seconds after. So `stop()` also flips
+`Orchestrator.stopped` — every instance's next `get_next_task` gets
+`{done: true}` regardless, which is what actually stops crediting within one
+cycle. `terminate_workflow()` stays too, for the demo-visible status.
 
-But `terminate_workflow()` alone isn't reliable either — confirmed live that
-Catalyst flips the instance's status to `terminated` immediately, yet the
-underlying orchestration keeps scheduling and executing activities (still
-crediting accounts) for tens of seconds afterward. So `stop()` also flips
-`Orchestrator.stopped` (see orchestrator.py) — every instance's next
-`get_next_task` call gets `{done: true}` regardless of terminate_workflow()'s
-fate, which is what actually, reliably stops the crediting within one credit
-cycle. `terminate_workflow()` is kept alongside it for the demo-visible
-"terminated" status in Catalyst, and because most instances aren't affected
-by this gotcha every time.
+Lives in the MCP server, which has no Dapr sidecar of its own (control
+nodepool) — so scheduling is delegated to any agent pod's `/schedule-one`.
 
-Lives in the MCP server (single instance, pinned to the control nodepool).
-The MCP server can't talk to its own Dapr workflow API directly (no sidecar
-on the control pool), so the actual `schedule_new_workflow` call is delegated
-to any agent pod via its `/schedule-one` HTTP endpoint — stateless on the
-agent side, load-balances across replicas.
+Scheduling goes straight to each pod's IP (round-robin), not through the
+`agent` Service: one httpx.AsyncClient's keep-alive connection would pin all
+10 calls to whichever pod the first request landed on, so pod-kill chaos
+would hit all-or-nothing instead of a partial freeze. Falls back to
+`AGENT_HTTP_BASE` when pod discovery isn't available (e.g. local compose).
 """
 
 import asyncio
@@ -47,28 +33,32 @@ import logging
 import os
 import time
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 import httpx
 
 if TYPE_CHECKING:
     from .orchestrator import Orchestrator
+    from .pod_chaos import PodChaosController
 
 log = logging.getLogger("replenisher")
 
 
 class Replenisher:
-    def __init__(self, orch: "Orchestrator") -> None:
+    def __init__(self, orch: "Orchestrator", pod_chaos: "PodChaosController | None" = None) -> None:
         self._orch = orch
+        self._pod_chaos = pod_chaos
         self._agent_base = os.environ.get(
             "AGENT_HTTP_BASE", "http://host.docker.internal:8000"
         )
+        self._agent_port = urlsplit(self._agent_base).port or 8000
         self._task: asyncio.Task | None = None
         self._run_tag: int | None = None
         self._target_concurrency: int = 10
         self._spawn_count: int = 0
         self._instance_ids: list[str] = []
         self._last_snap: dict[str, Any] = {}
-        # Throttle schedule calls to stay under Catalyst's per-app-id RPS limit.
+        # Stay under Catalyst's per-app-id RPS limit.
         self._schedule_throttle_ms = max(
             0, int(os.environ.get("SCHEDULE_THROTTLE_MS", "50"))
         )
@@ -83,11 +73,9 @@ class Replenisher:
         credits_per_customer: int,
         target: int,
     ) -> dict[str, Any]:
-        # Terminate any instances left running from a previous run first —
-        # otherwise they'd keep crediting into the freshly-reset accounts
-        # once `orch.reset()` hands out a new execution_run_id/queues below.
+        # Clear stragglers first — otherwise they'd credit into the accounts
+        # `orch.reset()` is about to hand fresh queues to.
         await self._terminate_all()
-        # Reset the queues in-process before we begin scheduling.
         orch_state = await self._orch.reset(
             customers=customers,
             credits_per_customer=credits_per_customer,
@@ -98,10 +86,20 @@ class Replenisher:
         self._spawn_count = 0
         if self._task is not None and not self._task.done():
             self._task.cancel()
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        pod_ips = self._live_agent_pod_ips()
+        if pod_ips:
+            log.info("scheduling across %d live agent pod(s): %s", len(pod_ips), pod_ips)
+        # 45s: a pod's first /schedule-one (building its runtime) can take
+        # well past 10s under load — confirmed live on bank-creditor-dapr-agents.
+        async with httpx.AsyncClient(timeout=45.0) as client:
             for customer_id in range(1, customers + 1):
                 instance_id = f"agent-{customer_id:03d}-r{self._run_tag}"
-                if await self._schedule_one(client, instance_id, customer_id):
+                base_url = (
+                    f"http://{pod_ips[(customer_id - 1) % len(pod_ips)]}:{self._agent_port}"
+                    if pod_ips
+                    else self._agent_base
+                )
+                if await self._schedule_one(client, base_url, instance_id, customer_id):
                     self._spawn_count += 1
                     self._instance_ids.append(instance_id)
                 if self._schedule_throttle_ms:
@@ -116,37 +114,53 @@ class Replenisher:
     async def stop(self) -> dict[str, Any]:
         if self._task is not None and not self._task.done():
             self._task.cancel()
-        # Belt-and-suspenders: flip the orchestrator's stopped flag FIRST so
-        # every instance's next credit_next call gets {done: true} and
-        # self-terminates within one credit cycle, regardless of whether the
-        # terminate_workflow() calls below actually take effect on Catalyst's
-        # end (observed live: they flip status to "terminated" but don't
-        # reliably stop the orchestration from scheduling more activities).
+        # Flip stopped first so every instance self-terminates within one
+        # credit cycle regardless of whether terminate_workflow() below
+        # actually takes effect (see module docstring).
         await self._orch.set_stopped(True)
         await self._terminate_all()
         return self.status()
 
     async def _terminate_all(self) -> None:
-        """Terminate every workflow instance scheduled by the current/last
-        run, via the agent's own `/agent/instances/{id}/terminate` endpoint —
-        best-effort, a stuck/unreachable instance just logs a warning rather
-        than blocking the stop/reset the user asked for."""
+        """Terminate every instance from the current/last run via each
+        instance's `/agent/instances/{id}/terminate` — best-effort, a stuck
+        instance just logs a warning.
+
+        Broadcasts to every live pod, not just the one the Service would
+        route to: necessary for `agent-plain`, whose `_tasks` registry is
+        per-pod in-memory, so an instance only exists on the pod that
+        scheduled it."""
         if not self._instance_ids:
             return
         instance_ids, self._instance_ids = self._instance_ids, []
+        pod_ips = self._live_agent_pod_ips()
+        bases = [f"http://{ip}:{self._agent_port}" for ip in pod_ips] or [self._agent_base]
         async with httpx.AsyncClient(timeout=10.0) as client:
             for instance_id in instance_ids:
-                try:
-                    r = await client.post(
-                        f"{self._agent_base}/agent/instances/{instance_id}/terminate"
-                    )
-                    if r.status_code >= 400:
-                        log.warning(
-                            "terminate %s returned %s: %s",
-                            instance_id, r.status_code, r.text[:200],
+                for base_url in bases:
+                    try:
+                        r = await client.post(
+                            f"{base_url}/agent/instances/{instance_id}/terminate"
                         )
-                except Exception as e:  # noqa: BLE001
-                    log.warning("terminate %s failed: %s", instance_id, e)
+                        if r.status_code >= 400:
+                            log.debug(
+                                "terminate %s via %s returned %s: %s",
+                                instance_id, base_url, r.status_code, r.text[:200],
+                            )
+                    except Exception as e:  # noqa: BLE001
+                        log.debug("terminate %s via %s failed: %s", instance_id, base_url, e)
+
+    def _live_agent_pod_ips(self) -> list[str]:
+        """Live agent pod IPs for direct (non-Service) requests. Empty when
+        pod discovery isn't available (not in-cluster, or no pod_chaos
+        instance wired in) — callers fall back to `AGENT_HTTP_BASE`."""
+        if self._pod_chaos is None:
+            return []
+        try:
+            pods = self._pod_chaos.list_live_pods()
+        except Exception:  # noqa: BLE001
+            return []
+        return sorted(p["ip"] for p in pods if p.get("ip") and p.get("phase") == "Running")
 
     def status(self) -> dict[str, Any]:
         return {
@@ -158,18 +172,15 @@ class Replenisher:
         }
 
     async def _loop(self) -> None:
-        """Watch the 10 already-scheduled instances run to completion. Each
-        one owns its own account's queue and loops internally — nothing here
-        spawns new instances; Dapr's durable execution handles pod-kill
-        resume for the ones already running."""
+        """Watch the 10 already-scheduled instances run to completion.
+        Nothing here spawns new instances — Dapr's durable execution handles
+        pod-kill resume for the ones already running."""
         async with httpx.AsyncClient(timeout=10.0) as client:
             while True:
                 try:
                     snap = await self._orch.status()
-                    # Sweep stale in-flight tasks back to their customer's
-                    # queue — the owning instance (still alive, or durably
-                    # replayed by Dapr after a host restart) simply re-claims
-                    # the task on its next credit_next call.
+                    # Stale in-flight tasks go back to their queue; the owning
+                    # instance re-claims on its next credit_next call.
                     sweep = await self._orch.sweep(timeout_seconds=60.0)
                     snap["released_total"] = sweep["released_total"]
                 except Exception as e:  # noqa: BLE001
@@ -182,13 +193,9 @@ class Replenisher:
                 in_flight = int(snap.get("in_flight", 0))
 
                 if queue_remaining == 0 and in_flight == 0:
-                    # Reconcile orchestrator's `reported` set against the
-                    # DB before declaring done. Catches ghost tx_ids that
-                    # the orchestrator counted as applied but that never
-                    # landed in the transactions table (rare race when an
-                    # activity timed out or a connection dropped mid-credit
-                    # under heavy chaos). Ghosts get re-queued and the owning
-                    # instance picks them up on its next loop iteration.
+                    # Reconcile against the DB before declaring done — catches
+                    # ghost tx_ids counted as applied but never persisted
+                    # (rare race under heavy chaos). Ghosts get re-queued.
                     try:
                         recon = await self._orch.reconcile()
                         if recon.get("ghosts", 0) > 0:
@@ -214,6 +221,7 @@ class Replenisher:
     async def _schedule_one(
         self,
         client: httpx.AsyncClient,
+        base_url: str,
         instance_id: str,
         customer_id: int,
         *,
@@ -222,7 +230,7 @@ class Replenisher:
         on_fail = log.debug if quiet else log.warning
         try:
             r = await client.post(
-                f"{self._agent_base}/schedule-one",
+                f"{base_url}/schedule-one",
                 json={"instance_id": instance_id, "customer_id": customer_id},
             )
             if r.status_code >= 400:

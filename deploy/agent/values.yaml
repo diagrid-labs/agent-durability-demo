@@ -1,42 +1,31 @@
 image:
   repository: alicejgibbons/bank-creditor-agent
   tag: "0.1.0"
-  # Always-pull so demo iteration on the same tag picks up freshly pushed
-  # images without bumping the tag. Switch to IfNotPresent for production.
+  # Always-pull so a fresh push on the same tag is picked up without a bump.
   pullPolicy: Always
 
-# One pod per AZ — the chart's topology spread (see deployment.yaml) splits
-# them across `topology.kubernetes.io/zone`. Each pod hosts many concurrent
-# workflow instances; bump only if the agents nodepool grows. Set to match
-# the number of AZs in the agents nodepool (e.g. 3 if your sub has 3 AZs,
-# 2 if it only has 2).
+# One pod per AZ (topology spread in deployment.yaml splits across
+# topology.kubernetes.io/zone) — match to the agents nodepool's AZ count.
 replicaCount: 2
 
 service:
   port: 8000
 
 mcp:
-  # Name of the Catalyst MCPServer resource fronting the Postgres MCP server
-  # (registered via `diagrid mcpserver create` against the mcp Service's
-  # /mcp/ endpoint). The agent calls it at
-  # $DAPR_HTTP_ENDPOINT/v1.0/diagrid/mcp/<serverName> — requires an access
-  # grant for this app-id (`diagrid mcpserver access grant`).
+  # Catalyst MCPServer resource fronting the Postgres MCP server (registered
+  # via `diagrid mcpserver create`). Requires an access grant for this app-id.
   serverName: bank-postgres-mcp
 
-# Workflow state store (Dapr Component, written by this chart).
-# In Catalyst mode (Cloud or Self-Hosted), the component is provisioned in
-# the Catalyst project via `diagrid kv create` instead — set `create: false`
-# so this chart doesn't try to render an in-cluster CRD that would conflict.
-# `componentName` is the CRD's metadata.name when `create: true` (see
-# templates/component-state.yaml); LangGraph durability doesn't read this
-# store directly, it comes entirely from Dapr Workflow activity persistence.
+# In Catalyst mode the state store is provisioned via `diagrid kv create`
+# instead, so create:false here avoids an in-cluster CRD conflict.
+# LangGraph durability comes from Dapr Workflow activity persistence, not this.
 stateStore:
   create: false
   componentName: agent-memory
   postgresHost: postgres.bank-creditor.svc.cluster.local
   postgresPort: 5432
   postgresDatabase: dapr_state
-  # Inline credentials for the demo. Unused when create=false.
+  # Inline demo credentials. Unused when create=false.
   postgresUser: bankadmin
   postgresPassword: bankadmin
 
@@ -47,7 +36,7 @@ agent:
   llm:
     mode: stub
     model: gpt-4o-mini
-    # Name of a Secret with key OPENAI_API_KEY. Only required when mode=real.
+    # Secret with key OPENAI_API_KEY. Only required when mode=real.
     apiKeySecret: ""
 
 resources:
@@ -64,8 +53,7 @@ nodeSelector:
 
 tolerations: []
 
-# Real Azure-AZ spread for the AZ-outage chaos story. AKS sets this label
-# automatically on each node based on its `--zones` membership.
+# Real Azure-AZ spread for the AZ-outage story, via AKS's per-node zone label.
 topologySpread:
   enabled: true
   maxSkew: 1
@@ -73,23 +61,20 @@ topologySpread:
   whenUnsatisfiable: DoNotSchedule
 
 dapr:
-  # Set false when running with Catalyst (Cloud or Self-Hosted) since pods
-  # don't get a daprd sidecar in those modes — the SDK talks to the Catalyst
-  # endpoint directly. Annotations are no-ops without a Dapr injector but
-  # we omit them for cleanliness.
+  # False under Catalyst — pods get no daprd sidecar; the SDK talks to
+  # Catalyst directly instead.
   enabled: true
   appId: bank-agent-creditor
   appPort: 8000
   appProtocol: http
   logLevel: info
 
-# Catalyst connection. `apiTokenSecret` must exist in the namespace before install.
+# Catalyst connection. apiTokenSecret must exist in the namespace before install.
 catalyst:
   enabled: false
   httpEndpoint: ""
   grpcEndpoint: ""
   apiTokenSecret: catalyst-agent-worker
   apiTokenSecretKey: DAPR_API_TOKEN
-  # Needed in same-cluster Catalyst Self-Hosted to bypass AKS hairpin NAT.
-  # Each entry: {ip: <string>, hostnames: [<list>]}.
+  # Bypasses AKS hairpin NAT for same-cluster Catalyst Self-Hosted.
   hostAliases: []

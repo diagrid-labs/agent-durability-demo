@@ -31,6 +31,15 @@ function fmtClock(ms) {
 /* ================ TopBar — Catalyst-docs style ================ */
 function TopBar({ state, feed, onTogglePause }) {
   const run = state.run || {};
+  // Labels which backend this page is talking to, one UI build for all.
+  const [deploymentLabel, setDeploymentLabel] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/config').then(r => r.json()).then(cfg => {
+      if (!cancelled && cfg && cfg.label) setDeploymentLabel(cfg.label);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   return (
     <div className="topbar">
@@ -39,6 +48,12 @@ function TopBar({ state, feed, onTogglePause }) {
           <img src="assets/diagrid-logo.png" alt="Diagrid" style={{ height: 26, width: 'auto', display: 'block' }} />
           <span style={{ color: 'var(--line-strong)', fontSize: 18, fontWeight: 300 }}>/</span>
           <span style={{ fontSize: 14, color: 'var(--fg-1)', fontWeight: 500 }}>Bank Creditor Demo</span>
+          {deploymentLabel && (
+            <span className="pill" style={{ fontSize: 11, padding: '2px 8px' }}
+                  title="Which backend this page is talking to">
+              {deploymentLabel}
+            </span>
+          )}
           {run.executionRunId != null && (
             <span className="pill" style={{ fontSize: 11, padding: '2px 8px' }}
                   title="Active execution run">

@@ -126,10 +126,8 @@ class Database:
     async def listen_transactions(
         self, queue: asyncio.Queue, stop_event: asyncio.Event
     ) -> None:
-        """Hold a dedicated connection that runs `LISTEN tx_committed` and
-        pushes every notification payload onto `queue`. Auto-reconnects until
-        `stop_event` is set. Each payload is the JSON string emitted by the
-        notify_transaction() trigger in init.sql."""
+        """Dedicated connection running `LISTEN tx_committed`, pushing each
+        payload onto `queue`. Auto-reconnects until `stop_event` is set."""
         dsn = os.environ["DATABASE_URL"]
         loop = asyncio.get_event_loop()
         while not stop_event.is_set():
@@ -154,10 +152,8 @@ class Database:
                         pass
 
     async def count_transactions(self, execution_run_id: int) -> int:
-        """Total credits committed under this execution run. Authoritative
-        source for the UI's `applied_total` counter — keeps the dashboard in
-        sync with the DB even when a workflow crashes after credit_account
-        but before report_done."""
+        """Total credits committed under this run — authoritative for the
+        UI's `applied_total`, even if a workflow crashes before report_done."""
         val = await self.pool.fetchval(
             "SELECT COUNT(*) FROM transactions WHERE execution_run_id = $1",
             execution_run_id,

@@ -1,6 +1,5 @@
 {{- if .Values.rbac.enabled }}
-# Namespaced: list + delete pods matching the agent label selector. The
-# /chaos/pod-kill endpoint uses this.
+# Namespaced: list+delete pods for /chaos/pod-kill.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -27,9 +26,8 @@ subjects:
     name: {{ include "mcp.name" . }}
     namespace: {{ .Release.Namespace }}
 ---
-# Cluster-scoped: nodes are not namespaced, so the infrastructure view
-# (`/chaos/infra`) needs a ClusterRole. Read-only — list/get only, no
-# modifications. Bound only to the MCP service account in this namespace.
+# Cluster-scoped: nodes aren't namespaced, so /chaos/infra needs a
+# ClusterRole. Read-only, bound only to this namespace's MCP account.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -55,4 +53,36 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "mcp.name" . }}
     namespace: {{ .Release.Namespace }}
+{{- if .Values.catalystSidecar.enabled }}
+---
+# Cross-namespace: lets this MCP account restart Catalyst's sidecar for this
+# app-id in its prj-<id> namespace — one pod, not the shared control plane.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "mcp.name" . }}-sidecar-restarter
+  namespace: {{ .Values.catalystSidecar.namespace }}
+  labels:
+    {{- include "mcp.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list", "get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "mcp.name" . }}-sidecar-restarter
+  namespace: {{ .Values.catalystSidecar.namespace }}
+  labels:
+    {{- include "mcp.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "mcp.name" . }}-sidecar-restarter
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "mcp.name" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
 {{- end }}

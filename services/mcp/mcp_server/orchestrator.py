@@ -1,17 +1,12 @@
 """In-memory work queues for the bank-creditor demo.
 
-Generates `customers * credits_per_customer` tasks (default 10 * 100 = 1000)
-split into one queue per customer, hands them out one at a time via
-`next_task(requester, customer_id)`, and tracks completion via `report_done`.
-Lives inside the MCP server process for simplicity.
+Generates `customers * credits_per_customer` tasks (default 1000), split into
+one queue per customer (each owned by exactly one workflow instance for the
+run), handed out via `next_task(requester, customer_id)` and tracked via
+`report_done`. Lives inside the MCP server process for simplicity.
 
-Each customer's queue is owned by exactly one long-running workflow instance
-for the life of a run — there's no cross-customer contention, so `next_task`
-is scoped to a single customer's queue rather than a shared pool.
-
-Each work cycle is scoped to an `execution_runs` row in Postgres so the
-demo can be replayed without truncating history — tx_ids recycle across
-runs, idempotency is enforced by the composite PK (execution_run_id, tx_id).
+Each run is scoped to an `execution_runs` row so the demo can replay without
+truncating history — idempotency via the (execution_run_id, tx_id) PK.
 """
 
 import asyncio
@@ -135,18 +130,12 @@ class Orchestrator:
     async def next_task(
         self, requester: str | None = None, customer_id: int | None = None
     ) -> dict[str, Any]:
-        """Return the next pending task for `requester`'s bound customer. If
-        the requester already has an in-flight task, return the same task —
-        this makes the endpoint idempotent across workflow replays.
+        """Next pending task for `requester`'s bound customer; replays of an
+        already-in-flight request get the same task back (idempotent).
 
-        Once `set_stopped(True)` has been called, every NEW task request
-        (i.e. not a replay of an already-in-flight one) gets {done: true} —
-        this is what actually stops a workflow instance from crediting more,
-        independent of whether Catalyst's own `terminate_workflow()` call
-        takes effect. An instance already holding an in-flight task still
-        gets to finish that one credit's cycle normally; only the next
-        loop-back is cut off. See CLAUDE.md's gotcha on Catalyst terminate
-        not reliably halting execution for why this exists."""
+        After `set_stopped(True)`, every new (non-replay) request gets
+        {done: true} — this is what actually stops crediting, independent of
+        whether Catalyst's terminate_workflow() takes effect (CLAUDE.md)."""
         async with self._lock:
             if requester:
                 existing_tx = self._state.by_requester.get(requester)
@@ -167,11 +156,8 @@ class Orchestrator:
             return self._task_response(task)
 
     async def release_for_retry(self, tx_id: str) -> dict[str, Any]:
-        """Return an in-flight task to the front of its customer's queue
-        without marking it as reported. Used when a transient error (chaos
-        drop, DB hiccup, agent crash mid-credit) means the task didn't
-        actually complete — otherwise `report_done` would permanently consume
-        it and the customer's last credits would never apply."""
+        """Return an in-flight task to the front of its queue without marking
+        it reported — for a transient failure that means it didn't complete."""
         async with self._lock:
             task = self._state.in_flight.pop(tx_id, None)
             self._state.in_flight_at.pop(tx_id, None)
@@ -189,13 +175,9 @@ class Orchestrator:
             }
 
     async def report_done(self, tx_id: str, applied: bool) -> dict[str, Any]:
-        """Mark `tx_id` complete. Idempotent: a duplicate ReportDone (e.g.
-        from a workflow replay) updates no counters but still cleans up
-        in_flight / by_requester. Without that cleanup, a sweep that
-        releases the task between the first ReportDone landing and a
-        re-dispense to a new workflow leaves the second workflow's
-        duplicate ReportDone unable to clear in_flight — sweep re-releases
-        forever, customer can't reach target."""
+        """Mark `tx_id` complete. Idempotent: a duplicate (replay) updates no
+        counters but still clears in_flight/by_requester, so a sweep can't
+        re-release it forever."""
         async with self._lock:
             duplicate = tx_id in self._state.reported
             task = self._state.in_flight.pop(tx_id, None)
@@ -233,18 +215,10 @@ class Orchestrator:
         }
 
     async def sweep(self, timeout_seconds: float = 30.0) -> dict[str, Any]:
-        """Return in_flight tasks older than `timeout_seconds` to their
-        customer's queue.
-
-        Defense against leaked in_flight slots when an activity fails before
-        ReportDone lands (e.g. transient MCP/DB errors with no retry, or a
-        worker crash mid-task). The owning workflow instance is still alive
-        (or will be durably replayed by Dapr) and will simply re-claim the
-        task on its next `credit_next` call — this just unblocks that
-        instead of leaving the slot stuck forever.
-
-        Returns the list of orphan requesters (workflow instance ids) for
-        logging/telemetry purposes only."""
+        """Return in_flight tasks older than `timeout_seconds` to their queue
+        — defense against a leaked slot when an activity fails before
+        ReportDone lands. The owning instance re-claims it on its next call.
+        Returns orphan requesters for logging only."""
         async with self._lock:
             now = time.time()
             stale = [
@@ -272,14 +246,9 @@ class Orchestrator:
             }
 
     async def reconcile(self) -> dict[str, Any]:
-        """Cross-check the `reported` set against the DB and recover ghost
-        tx_ids — ones the orchestrator marked applied but that never landed
-        in transactions (rare race under chaos when an activity timed out
-        or a connection was abruptly closed mid-credit). For each ghost:
-        un-report it, decrement applied, push the task back onto the queue
-        so the replenisher will retry it. Re-attempts are idempotent — if
-        the row IS actually in the DB (false-positive ghost), the next
-        credit_account call gets a conflict and reports applied=False."""
+        """Cross-check `reported` against the DB and recover ghost tx_ids —
+        marked applied but never persisted (rare race under chaos). Un-report,
+        decrement applied, and requeue each one; idempotent to retry."""
         if self._db is None:
             return {"ghosts": 0}
         async with self._lock:

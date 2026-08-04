@@ -1,0 +1,25 @@
+Plain LangGraph agent worker deployed — no Dapr, no Catalyst.
+
+In-cluster service:
+  http://agent.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+
+Endpoints:
+  POST /trigger {customer_id, target?}   start a credit loop for one account
+  GET  /status/{instance_id}             in-memory task status
+  GET  /healthz                          liveness
+
+Smoke test (contrast with the Dapr-backed demo — this one should NOT resume):
+  kubectl -n {{ .Release.Namespace }} port-forward svc/agent 8000:8000
+
+  # Start crediting customer 1 to $200
+  curl -s -X POST localhost:8000/trigger -H 'content-type: application/json' \
+       -d '{"customer_id": 1, "target": 200}'
+
+  # Mid-run, kill whichever pod is running that task
+  kubectl -n {{ .Release.Namespace }} delete pod -l app.kubernetes.io/name=agent
+
+  # Balance should stay frozen at whatever it was — nothing resumes it without
+  # a fresh POST to /trigger or /schedule-one for the same customer_id.
+  kubectl -n {{ .Release.Namespace }} exec postgres-0 -- \
+    psql -U bankadmin -d bankdemo -c \
+    "SELECT balance FROM accounts WHERE customer_id=1; SELECT count(*) FROM transactions WHERE customer_id=1;"

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: agent-plain
+description: Plain LangGraph worker(s) for the Bank Creditor demo — no Dapr, no Catalyst
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -6,9 +6,7 @@ metadata:
     {{- include "mcp.labels" . | nindent 4 }}
   {{- if and (eq (.Values.service.type | default "ClusterIP") "LoadBalancer") .Values.service.azureDnsLabel }}
   annotations:
-    # AKS-only: provisions <label>.<region>.cloudapp.azure.com on the
-    # public IP backing this Service's LoadBalancer. Label must be unique
-    # within the Azure region.
+    # AKS-only: provisions <label>.<region>.cloudapp.azure.com on the LB's IP.
     service.beta.kubernetes.io/azure-dns-label-name: {{ .Values.service.azureDnsLabel | quote }}
   {{- end }}
 spec:

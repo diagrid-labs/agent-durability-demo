@@ -30,17 +30,13 @@ db = Database()
 chaos = Chaos()
 orch = Orchestrator()
 pod_chaos = PodChaosController()
-replenisher = Replenisher(orch)
+replenisher = Replenisher(orch, pod_chaos)
 slots = SlotTracker()
 
 
 class TxBroadcaster:
     """Fan-out of `tx_committed` notifications to connected WebSocket clients.
-
-    A single asyncpg LISTEN connection feeds an asyncio.Queue (see
-    Database.listen_transactions); the broadcast loop drains the queue and
-    pushes each event to every registered client. Slow/dead clients are
-    dropped silently — the demo prefers freshness over delivery guarantees."""
+    Slow/dead clients are dropped silently — freshness over delivery guarantees."""
 
     def __init__(self) -> None:
         self._clients: set[WebSocket] = set()
@@ -77,8 +73,7 @@ broadcaster = TxBroadcaster()
 _tx_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=10_000)
 _tx_stop = asyncio.Event()
 
-# In-memory ring buffer feeding the UI's MCP-server card. Server-monotonic
-# `ts` so the UI's fmtClock renders mm:ss since server start.
+# Ring buffer feeding the UI's MCP-server card; `ts` is monotonic since start.
 MCP_LOG: deque[dict[str, Any]] = deque(maxlen=60)
 _SERVER_STARTED = time.monotonic()
 _MCP_SEQ = 0
@@ -98,10 +93,8 @@ def log_mcp(kind: str, text: str) -> None:
 
 
 async def _drain_tx_queue() -> None:
-    """Pump `tx_committed` payloads from the listener queue out to all
-    connected WebSocket clients. Each payload is the JSON string the
-    postgres trigger built — we forward as-is under `{"type": "tx", ...}`
-    so the UI can route on type."""
+    """Pump `tx_committed` payloads to all WebSocket clients, tagged
+    `{"type": "tx", ...}` so the UI can route on type."""
     while True:
         payload = await _tx_queue.get()
         try:
@@ -113,12 +106,9 @@ async def _drain_tx_queue() -> None:
 
 
 class _MCPTrailingSlashMiddleware:
-    """Catalyst's MCP proxy relays a caller's actual tool-call requests to the
-    registered upstream URL with the trailing slash stripped (its own health
-    ping keeps the slash). Bare `/mcp` only gets a partial match against the
-    `/mcp` Mount below, so Starlette falls through to the `/` StaticFiles
-    catch-all, which rejects POST with 405 before FastMCP ever sees it.
-    Normalize the path here, ahead of routing."""
+    """Catalyst's proxy strips the trailing slash from tool-call requests;
+    bare `/mcp` then falls through to the `/` StaticFiles catch-all (405
+    on POST) instead of matching the `/mcp` Mount. Normalize it here."""
 
     def __init__(self, app):
         self.app = app
@@ -129,31 +119,29 @@ class _MCPTrailingSlashMiddleware:
         await self.app(scope, receive, send)
 
 
+# Matches bank-creditor's Service DNS; override via MCP_ALLOWED_HOSTS for others.
+_DEFAULT_ALLOWED_HOSTS = (
+    "mcp.bank-creditor.svc.cluster.local,"
+    "mcp.bank-creditor.svc.cluster.local:80,"
+    "mcp.bank-creditor.svc.cluster.local:8000,"
+    "mcp,mcp:80,mcp:8000,"
+    "localhost,localhost:8000,localhost:9000,"
+    "127.0.0.1,127.0.0.1:8000,127.0.0.1:9000"
+)
+_ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.environ.get("MCP_ALLOWED_HOSTS", _DEFAULT_ALLOWED_HOSTS).split(",")
+    if h.strip()
+]
+
 log_mcp("sys", "CONNECT mcp://postgres.bank.svc · session opened")
 mcp = FastMCP(
     "bank-creditor-postgres",
     streamable_http_path="/",
-    # Stateless: every request is independent, no session ID required. Lets us
-    # run multiple MCP server replicas without session affinity in the Service.
+    # No session ID needed — lets replicas run without Service session affinity.
     stateless_http=True,
-    # FastMCP rejects unknown Host headers by default (DNS rebinding protection).
-    # Allow the in-cluster Service DNS so agent pods can reach us via k8s DNS.
-    transport_security=TransportSecuritySettings(
-        allowed_hosts=[
-            "mcp.bank-creditor.svc.cluster.local",
-            "mcp.bank-creditor.svc.cluster.local:80",
-            "mcp.bank-creditor.svc.cluster.local:8000",
-            "mcp",
-            "mcp:80",
-            "mcp:8000",
-            "localhost",
-            "localhost:8000",
-            "localhost:9000",
-            "127.0.0.1",
-            "127.0.0.1:8000",
-            "127.0.0.1:9000",
-        ],
-    ),
+    # FastMCP rejects unknown Host headers by default; allow the in-cluster DNS.
+    transport_security=TransportSecuritySettings(allowed_hosts=_ALLOWED_HOSTS),
 )
 
 
@@ -183,21 +171,13 @@ async def get_customer(customer_id: int) -> dict[str, Any]:
 async def credit_next(
     requester: str = "", customer_id: int = 0, pod: str = ""
 ) -> dict[str, Any]:
-    """Claim, evaluate, and (if needed) apply this customer's next pending
-    $1 credit — one MCP call per credit instead of the old four-call
-    get_next_task/get_balance/credit_account/report_done cycle.
+    """Claim and apply this customer's next pending $1 credit in one call.
+    `requester` is this workflow's stable identity, so replays claim the same
+    in-flight credit. `pod` maps slots to pods for the heatmap view.
 
-    `customer_id` is the account this workflow instance is permanently bound
-    to for the whole run. Pass `requester` (your stable workflow identity,
-    e.g. 'agent-007-r123') so replays claim the same in-flight credit instead
-    of popping a new one. `pod` is the agent pod hostname, recorded so the
-    heatmap pod-fleet view can map slots to pods — `customer_id` doubles as
-    the heatmap slot since each customer has exactly one owning instance.
-
-    Returns {done: true} once that customer's 100 credits are exhausted;
-    otherwise {done: false, applied, tx_id, balance, n}. `applied=false`
-    means the customer had already reached target (or the credit was a
-    replay duplicate) — no error, just nothing more to do this cycle."""
+    Returns {done: true} once 100 credits are exhausted, else {done: false,
+    applied, tx_id, balance, n}. `applied=false` means already at target or
+    a replay duplicate — not an error."""
     if customer_id and pod:
         await slots.record(customer_id, pod)
     task = await orch.next_task(
@@ -260,8 +240,7 @@ def build_app() -> FastAPI:
     async def lifespan(app: FastAPI):
         await db.connect()
         await orch.bootstrap(db)
-        # Start the listener (dedicated asyncpg conn) and the broadcaster
-        # drain loop. Both run for the lifetime of the process.
+        # Listener + broadcaster drain loop run for the process lifetime.
         listener_task = asyncio.create_task(
             db.listen_transactions(_tx_queue, _tx_stop), name="pg-listener"
         )
@@ -337,6 +316,9 @@ def build_app() -> FastAPI:
                 f"pod-kill: deleted {len(killed_pods)} pods · "
                 f"{', '.join(killed_pods)} · {len(affected_slots)} slots affected",
             )
+            restarted = result.get("catalyst_sidecar", {}).get("restarted")
+            if restarted:
+                log_mcp("chaos", f"catalyst sidecar restart: {', '.join(restarted)}")
             # Reclaim slots immediately so the replenisher backfills fast.
             sweep = await orch.sweep(timeout_seconds=0.0)
             result["released_after_kill"] = sweep.get("released")
@@ -351,9 +333,8 @@ def build_app() -> FastAPI:
 
     @app.get("/chaos/pods")
     async def chaos_pods() -> dict[str, Any]:
-        """List live agent pods with the current workflow count each is
-        servicing (per the slot tracker). UI consumes this to render
-        accurate `Kill 1 pod (~N agents)` labels and to pick a victim."""
+        """Live agent pods + workflow count each, for the UI's
+        `Kill 1 pod (~N agents)` labels and victim picker."""
         live = pod_chaos.list_live_pods()
         counts = await slots.pod_counts()
         for entry in live:
@@ -390,6 +371,9 @@ def build_app() -> FastAPI:
                 f"az-kill zone={zone}: deleted {len(killed_pods)} pods · "
                 f"{len(affected_slots)} slots affected",
             )
+            restarted = result.get("catalyst_sidecar", {}).get("restarted")
+            if restarted:
+                log_mcp("chaos", f"catalyst sidecar restart: {', '.join(restarted)}")
             sweep = await orch.sweep(timeout_seconds=0.0)
             result["released_after_kill"] = sweep.get("released")
             if affected_slots:
@@ -411,11 +395,8 @@ def build_app() -> FastAPI:
 
     @app.get("/chaos/infra")
     async def chaos_infra() -> dict[str, Any]:
-        """Operating environment: AKS nodepools and their nodes. The UI
-        renders this alongside the pod list so the audience sees the full
-        platform context (nodepool split, AZ spread, ready state).
-        `impacted_zones` tags zones whose pods were just AZ-killed; the UI
-        pulses those nodes/nodepool entries until the TTL expires."""
+        """AKS nodepools/nodes, for the UI's platform-context view.
+        `impacted_zones` tags recently AZ-killed zones for a pulse effect."""
         nodes = pod_chaos.list_nodes()
         return {
             "available": pod_chaos.snapshot()["available"],
@@ -461,15 +442,12 @@ def build_app() -> FastAPI:
 
     @app.websocket("/ws/telemetry")
     async def telemetry_ws(ws: WebSocket) -> None:
-        """Push-based telemetry: every `tx_committed` notification arrives as
-        a `{"type":"tx", execution_run_id, tx_id, customer_id, amount,
-        agent_id, created_at}` frame. UI updates balances per-tx instead of
-        waiting for the next poll cycle."""
+        """Push `tx_committed` frames to the UI so balances update per-tx
+        instead of waiting for the next poll."""
         await broadcaster.add(ws)
         try:
             while True:
-                # We don't expect client-to-server messages, but `receive_text`
-                # keeps the connection alive and surfaces disconnects.
+                # No client messages expected; keeps the connection alive.
                 await ws.receive_text()
         except WebSocketDisconnect:
             pass
@@ -478,8 +456,7 @@ def build_app() -> FastAPI:
         finally:
             await broadcaster.remove(ws)
 
-    # Replenisher runs here (singleton); /schedule-one on the agent is stateless.
-    # One workflow instance per customer — agent count is always == customers.
+    # Replenisher (singleton) runs here; /schedule-one on the agent is stateless.
     class AgentSpawnBody(BaseModel):
         customers: int = Field(default=10, ge=1, le=100)
         credits_per_customer: int = Field(default=100, ge=1, le=1000)
@@ -511,8 +488,12 @@ def build_app() -> FastAPI:
         except Exception as e:  # noqa: BLE001
             raise HTTPException(503, str(e))
 
-    # Convert simulated drops to a 5xx so MCP propagates a tool error to the
-    # caller, which Dapr workflow surfaces as a step failure → automatic retry.
+    @app.get("/config")
+    async def config() -> dict[str, Any]:
+        # Lets the UI label which deployment it's talking to, one UI build for all.
+        return {"label": os.environ.get("DEPLOYMENT_LABEL", "Diagrid Catalyst")}
+
+    # Simulated drops become a 5xx so the workflow sees a step failure → retry.
     @app.exception_handler(DroppedCallError)
     async def _drop_handler(_, exc: DroppedCallError):  # type: ignore[no-untyped-def]
         log_mcp("chaos", f"MCP call dropped: {exc} · workflow will retry")

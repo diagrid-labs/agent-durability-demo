@@ -124,19 +124,19 @@ Either:
 
 ## MCP tool calls failing through Catalyst's proxy
 
-The agent reaches the MCP server's tools (`get_balance`, `credit_account`, `get_next_task`, `report_done`) at `$DAPR_HTTP_ENDPOINT/v1.0/diagrid/mcp/<MCP_SERVER_NAME>`, not directly. Three likely causes:
+The agent reaches the MCP server's one consolidated tool (`credit_next`) at `$DAPR_HTTP_ENDPOINT/v1.0/diagrid/mcp/<MCP_SERVER_NAME>`, not directly. Three likely causes:
 
 1. **`403 Forbidden`.** No access grant, or it doesn't cover the tool being called. New `MCPServer` resources deny everything until granted:
    ```bash
-   diagrid mcpserver access get bank-postgres-mcp --project resiliency-demo
-   diagrid mcpserver access grant bank-postgres-mcp --project resiliency-demo \
+   diagrid mcpserver access get bank-postgres-mcp --project resiliency-demo-langgraph
+   diagrid mcpserver access grant bank-postgres-mcp --project resiliency-demo-langgraph \
      --caller bank-agent-creditor \
-     --allow-tools get_balance,credit_account,get_next_task,report_done --wait
+     --allow-tools credit_next --wait
    ```
 
 2. **`upstream HTTP 405`.** Catalyst's proxy relays the caller's actual request to the registered upstream URL with the trailing slash stripped (its own health ping keeps the slash). FastMCP's `/mcp` Mount only gives Starlette a partial match for the bare path, so it falls through to the `/` static-files catch-all, which rejects POST. Fixed by `_MCPTrailingSlashMiddleware` in `services/mcp/mcp_server/server.py` — confirm it's present and deployed (`kubectl -n bank-creditor logs deploy/mcp | grep 405` should show nothing new after a fresh rollout).
 
-3. **`MCP_SERVER_NAME` mismatch.** The agent's env var must match the registered `MCPServer` resource's name exactly (`diagrid mcpserver list --project resiliency-demo`). Check with:
+3. **`MCP_SERVER_NAME` mismatch.** The agent's env var must match the registered `MCPServer` resource's name exactly (`diagrid mcpserver list --project resiliency-demo-langgraph`). Check with:
    ```bash
    kubectl -n bank-creditor get deploy agent -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="MCP_SERVER_NAME")].value}'
    ```

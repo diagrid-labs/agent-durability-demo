@@ -41,7 +41,7 @@ This demo needs both managed workflow **and** agent infrastructure at project-cr
 
 ```bash
 diagrid login
-diagrid project create bank-creditor-local \
+diagrid project create my-project \
   -r diagrid-aws-eu-west \
   --enable-managed-workflow \
   --enable-agent-infrastructure \
@@ -57,7 +57,7 @@ diagrid appid create agent-worker --wait
 `--enable-agent-infrastructure` auto-provisions a managed state store named `agent-memory`. Reuse that for the workflow state store — no extra `diagrid kv create` needed. Verify:
 
 ```bash
-diagrid project get bank-creditor-local   # ManagedWorkflowStore: enabled (+ agent infra)
+diagrid project get my-project   # ManagedWorkflowStore: enabled (+ agent infra)
 diagrid component list                 # agent-memory state.diagrid all app identities ready
 ```
 
@@ -84,18 +84,18 @@ The agent's tool calls (`get_balance`, `credit_account`, `get_next_task`, `repor
 
 ```bash
 diagrid mcpserver create bank-postgres-mcp \
-  --project bank-creditor-local \
+  --project my-project \
   --url http://localhost:9000/mcp/ \
   --wait
 
 diagrid mcpserver access grant bank-postgres-mcp \
-  --project bank-creditor-local \
+  --project my-project \
   --caller agent-worker \
   --allow-tools get_balance,credit_account,get_next_task,report_done \
   --wait
 ```
 
-**Known gap, not yet verified**: with Catalyst Cloud (this section's `bank-creditor-local` project), `localhost:9000` is only reachable from *this laptop* — `diagrid dev run`'s tunnel exposes the agent's port outward, but doesn't expose the MCP server's port inward-to-Catalyst. If registration or tool calls fail with a connect error, you likely need to tunnel the MCP server too (e.g. `ngrok http 9000` and register that URL instead), or point this registration at an already-reachable MCP endpoint (like the one from [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md), if you have one). This was validated end-to-end for the Self-Hosted / in-cluster case, not for Catalyst Cloud + a laptop-only MCP server.
+**Known gap, not yet verified**: with Catalyst Cloud (this section's `my-project` project), `localhost:9000` is only reachable from *this laptop* — `diagrid dev run`'s tunnel exposes the agent's port outward, but doesn't expose the MCP server's port inward-to-Catalyst. If registration or tool calls fail with a connect error, you likely need to tunnel the MCP server too (e.g. `ngrok http 9000` and register that URL instead), or point this registration at an already-reachable MCP endpoint (like the one from [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md), if you have one). This was validated end-to-end for the Self-Hosted / in-cluster case, not for Catalyst Cloud + a laptop-only MCP server.
 
 ## 3. Install agent dependencies
 
@@ -112,14 +112,14 @@ cd -
 From the repo root:
 
 ```bash
-diagrid dev run --file dapr.yaml --project bank-creditor-local \
+diagrid dev run --file dapr.yaml --project my-project \
   --skip-managed-kv --skip-managed-pubsub --skip-default-resiliency
 ```
 
 The `--skip-*` flags prevent `dev run` from auto-creating duplicate default components on top of the ones agent-infrastructure already provisioned in §1.
 
 This will:
-1. Authenticate against your `bank-creditor` project.
+1. Authenticate against your `my-project` project.
 2. Open a dev tunnel from Catalyst back to `localhost:8000`.
 3. Spawn `uvicorn agent_worker.main:app` and a local daprd that proxies all Dapr API calls to Catalyst.
 
@@ -158,7 +158,7 @@ docker compose -f local/compose.yaml down -v
 To delete the Catalyst project entirely:
 
 ```bash
-diagrid project delete bank-creditor-local
+diagrid project delete my-project
 ```
 
 > Re-provisioning is the only way to add `--enable-agent-infrastructure` to a project — there's no `project update` for it.

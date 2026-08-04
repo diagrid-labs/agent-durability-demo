@@ -4,14 +4,14 @@ A ~10-minute walkthrough. Opens in the Catalyst App Graph, drills through the ag
 
 ## 0. Pre-flight (before stage)
 
-- [ ] Browser tab: Catalyst Console, `resiliency-demo` project, on the **App graph** tab
+- [ ] Browser tab: Catalyst Console, `resiliency-demo-langgraph` project, on the **App graph** tab
 - [ ] Browser tab: the Bank Creditor UI (LoadBalancer IP, port 80)
 - [ ] Click **Reset** in the UI so balances are at $100 and Operations History is empty
 - [ ] If prior workflows clutter the Catalyst Workflows list, purge them so a new run is easy to spot
 
 ## 1. Catalyst App Graph — "the architecture in one picture"
 
-**Screen:** App Graph for `resiliency-demo`
+**Screen:** App Graph for `resiliency-demo-langgraph`
 
 **Pitch:**
 > "Here's the application we're going to look at. Two services: an AI agent on the left, `bank-agent-creditor`, and its Postgres-backed MCP server on the right, `bank-postgres-mcp`. The arrow shows the agent calling the MCP server — but that call goes through Catalyst's managed MCP proxy, not a direct connection. Catalyst governs exactly which tools this agent is allowed to call. That's the whole architecture — an agent using tools exposed by an MCP server, with Catalyst controlling access to both the workflow and the tool surface."

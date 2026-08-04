@@ -41,6 +41,25 @@ spec:
               value: {{ .Values.agent.httpBase | quote }}
             - name: POD_CHAOS_LABEL_SELECTOR
               value: {{ .Values.podChaos.labelSelector | quote }}
+            - name: CATALYST_SIDECAR_NAMESPACE
+              value: {{ .Values.catalystSidecar.namespace | quote }}
+            - name: CATALYST_SIDECAR_APP_ID
+              value: {{ .Values.catalystSidecar.appId | quote }}
+            - name: DEPLOYMENT_LABEL
+              value: {{ .Values.deploymentLabel | quote }}
+            {{- /* Computed from the release namespace so this is correct for
+                  any namespace automatically — no per-deployment override to
+                  remember. FastMCP rejects unknown Host headers by default
+                  (DNS rebinding protection); this is the in-cluster Service
+                  FQDN agent pods reach us at. */}}
+            - name: MCP_ALLOWED_HOSTS
+              value: >-
+                {{ printf "mcp.%s.svc.cluster.local" .Release.Namespace }},
+                {{ printf "mcp.%s.svc.cluster.local:80" .Release.Namespace }},
+                {{ printf "mcp.%s.svc.cluster.local:8000" .Release.Namespace }},
+                mcp,mcp:80,mcp:8000,
+                localhost,localhost:8000,localhost:9000,
+                127.0.0.1,127.0.0.1:8000,127.0.0.1:9000
             - name: PGUSER
               valueFrom:
                 secretKeyRef:

@@ -1,13 +1,11 @@
 """Real pod-kill chaos using the Kubernetes API.
 
-The demo's "kill N random agent pods" button POSTs here; we list pods matching
-the configured label selector and delete a random subset. Kubernetes
-reschedules them via the Deployment, in-flight workflows resume on whichever
-pod picks them up — that's the durability story.
+Lists pods matching the configured label selector and deletes a random
+subset; the Deployment reschedules them and in-flight workflows resume on
+whichever pod picks them up — that's the durability story.
 
-Gracefully no-op when not running inside a Pod (e.g. local docker-compose):
-`load_incluster_config()` raises ConfigException and we leave the controller
-disabled. Endpoints will respond with `available: false`.
+No-ops when not running in-cluster (e.g. local docker-compose): endpoints
+respond with `available: false`.
 """
 
 import logging
@@ -27,6 +25,11 @@ class PodChaosController:
         self._label_selector = os.environ.get(
             "POD_CHAOS_LABEL_SELECTOR", "app.kubernetes.io/name=agent"
         )
+        # Catalyst's remote Dapr sidecar for this app-id, in the project's own
+        # `prj-<id>` namespace. Empty means the capability is off — only
+        # bank-creditor's mcp release sets these (see deploy/mcp).
+        self._sidecar_namespace = os.environ.get("CATALYST_SIDECAR_NAMESPACE", "")
+        self._sidecar_app_id = os.environ.get("CATALYST_SIDECAR_APP_ID", "")
         self._init_client()
 
     def _init_client(self) -> None:
@@ -58,11 +61,46 @@ class PodChaosController:
             "available": self._enabled,
             "namespace": self._namespace,
             "label_selector": self._label_selector,
+            "sidecar_restart_configured": bool(
+                self._sidecar_namespace and self._sidecar_app_id
+            ),
         }
 
+    def _restart_catalyst_sidecar(self) -> dict[str, Any]:
+        """Best-effort: delete Catalyst's sidecar pod for this app-id, called
+        after every pod-kill/AZ-kill to test whether it unsticks activities
+        orphaned by the kill (see CLAUDE.md's pod-kill-mid-activity gotcha).
+        No-ops when not configured.
+
+        Always unconditional, even for AZ-kill: the sidecar's single replica
+        runs on the `control` nodepool (zone `"0"`), never the `agents`
+        nodepool's real AZs, so it has no zone to match against."""
+        if not self._enabled or not self._sidecar_namespace or not self._sidecar_app_id:
+            return {"attempted": False}
+        selector = f"app.kubernetes.io/name=sidecar,dapr-app-id={self._sidecar_app_id}"
+        try:
+            pods = self._v1.list_namespaced_pod(
+                self._sidecar_namespace, label_selector=selector
+            )
+        except Exception as e:  # noqa: BLE001
+            return {"attempted": True, "restarted": [], "error": str(e)}
+        candidates = [p for p in pods.items if p.metadata.deletion_timestamp is None]
+        restarted: list[str] = []
+        errors: list[str] = []
+        for p in candidates:
+            try:
+                self._v1.delete_namespaced_pod(p.metadata.name, self._sidecar_namespace)
+                restarted.append(p.metadata.name)
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{p.metadata.name}: {e}")
+        result: dict[str, Any] = {"attempted": True, "restarted": restarted}
+        if errors:
+            result["errors"] = errors
+        return result
+
     def list_live_pods(self) -> list[dict[str, Any]]:
-        """Return the currently-running agent pods (with node + zone) so the
-        UI can show what's actually killable. Returns [] when not in-cluster."""
+        """Currently-running agent pods with node + zone, for the UI's
+        killable-pod list. Empty when not in-cluster."""
         if not self._enabled:
             return []
         try:
@@ -84,6 +122,7 @@ class PodChaosController:
                 "node": node_name,
                 "zone": node_zones.get(node_name),
                 "phase": p.status.phase,
+                "ip": p.status.pod_ip,
             })
         out.sort(key=lambda x: x["pod"])
         return out
@@ -123,12 +162,12 @@ class PodChaosController:
         }
         if errors:
             result["errors"] = errors
+        if killed:
+            result["catalyst_sidecar"] = self._restart_catalyst_sidecar()
         return result
 
     def list_nodes(self) -> list[dict[str, Any]]:
-        """Cluster-wide node summary: name, nodepool (AKS `agentpool` label),
-        AZ (`topology.kubernetes.io/zone`), demo role label, ready condition.
-        Empty list when not in-cluster or RBAC denies."""
+        """Cluster-wide node summary: name, nodepool, zone, role, ready."""
         if not self._enabled:
             return []
         try:
@@ -187,7 +226,11 @@ class PodChaosController:
             self._v1.delete_namespaced_pod(pod_name, self._namespace)
         except Exception as e:  # noqa: BLE001
             return {"available": True, "killed": [], "error": str(e)}
-        return {"available": True, "killed": [pod_name]}
+        return {
+            "available": True,
+            "killed": [pod_name],
+            "catalyst_sidecar": self._restart_catalyst_sidecar(),
+        }
 
     def kill_random(self, count: int) -> dict[str, Any]:
         if not self._enabled:
@@ -224,4 +267,6 @@ class PodChaosController:
         }
         if errors:
             result["errors"] = errors
+        if killed:
+            result["catalyst_sidecar"] = self._restart_catalyst_sidecar()
         return result
