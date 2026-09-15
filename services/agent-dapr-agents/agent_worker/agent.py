@@ -63,7 +63,7 @@ def build_agent() -> DurableAgent:
     return DurableAgent(
         name="bank-creditor",
         role="Bank Creditor",
-        goal="Credit a customer's account to by $100, one dollar at a time.",
+        goal="Credit a customer's account by $100, one dollar at a time.",
         tools=[credit_next],
         llm=StubLLM(),
         state=AgentStateConfig(store=StateStoreService(store_name=AGENT_MEMORY_STORE)),
