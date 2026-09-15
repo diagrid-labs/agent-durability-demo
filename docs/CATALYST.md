@@ -9,7 +9,7 @@ Run the Bank Creditor demo (a LangGraph agent, durably executed via `diagrid.age
 ```
 ┌────────────────────┐     diagrid dev tunnel    ┌─────────────────────────┐
 │ Catalyst project   │ ◄───────────────────────► │ agent-worker (uvicorn)  │
-│  · workflow engine │                           │  ./services/agent       │
+│  · workflow engine │                           │  agent-langgraph        │
 │  · state store     │                           │  appPort 8000           │
 │  · MCP proxy        │──┐                        │  daprHTTPPort 3500      │
 └────────────────────┘  │ /v1.0/diagrid/mcp/...   └────────────┬────────────┘
@@ -102,7 +102,7 @@ diagrid mcpserver access grant bank-postgres-mcp \
 The agent runs as a normal Python process (not in docker) so `diagrid dev run` can attach the daprd tunnel to it.
 
 ```bash
-cd services/agent
+cd services/agent-langgraph
 uv sync
 cd -
 ```
@@ -165,7 +165,7 @@ diagrid project delete my-project
 
 ## Notes & gotchas
 
-- **The stub agent's tool-call loop is inherently bounded** — the LangGraph state machine in `services/agent/agent_worker/stub_llm.py` alternates `get_next_task` / `get_balance` / `credit_account` / `report_done`, one credit per workflow instance, then stops. `DaprWorkflowGraphRunner`'s own `max_steps` (default 100, passed as a `build_runner()` kwarg if you ever need to override it) is well above this and shouldn't need tuning.
+- **The stub agent's tool-call loop is inherently bounded** — the LangGraph state machine in `services/agent-langgraph/agent_worker/stub_llm.py` alternates `get_next_task` / `get_balance` / `credit_account` / `report_done`, one credit per workflow instance, then stops. `DaprWorkflowGraphRunner`'s own `max_steps` (default 100, passed as a `build_runner()` kwarg if you ever need to override it) is well above this and shouldn't need tuning.
 - **Real LLM mode** (`STUB_LLM=false`, with `OPENAI_API_KEY` set in `dapr.yaml`'s `env:`) only works with a model that emits OpenAI-compatible structured tool calls.
 - **Tool calls fail with `403 Forbidden`** — no MCP access grant yet for `agent-worker`, or it's missing one of the four tools. Re-run the `diagrid mcpserver access grant` command in step 2.
 - **Workflow name** is the most common stumbling block — see [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#orchestratornotregistererror-a-x-orchestrator-was-not-registered).

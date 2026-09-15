@@ -1,5 +1,6 @@
 """LangGraph graph + DaprWorkflowGraphRunner setup for the Bank Creditor demo."""
 
+import asyncio
 import os
 from typing import Any, Optional, TypedDict
 
@@ -10,10 +11,13 @@ from langgraph.graph import START, StateGraph
 from .mcp_client import call_tool
 from .stub_llm import StubLLM
 
+# Paces the demo so a run stays watchable on stage — without it 100 credits
+# clear in a couple seconds, too fast to trigger and observe chaos mid-run.
+CREDIT_PACE_SECONDS = 0.3
+
 
 class BankerState(TypedDict):
-    """Fixed-size state, overwritten each step — a growing MessagesState
-    would blow Catalyst's 4MB gRPC payload ceiling (see stub_llm.py)."""
+    """Fixed-size state, overwritten each step (see stub_llm.py)."""
 
     requester: str
     customer_id: int
@@ -24,11 +28,9 @@ class BankerState(TypedDict):
 
 @tool
 async def credit_next(requester: str, customer_id: int) -> dict[str, Any]:
-    """Claim and apply this customer's next $1 credit in one MCP call.
-    `requester` is this workflow's stable identity, so replays reclaim the
-    same in-flight credit. Returns {done: true} once 100 credits are used,
-    else {done: false, applied, tx_id, balance, n}."""
-    return await call_tool(
+    """Claim and apply this customer's next $1 credit. `requester` is this
+    workflow's stable identity, so replays reclaim the same in-flight credit."""
+    result = await call_tool(
         "credit_next",
         {
             "requester": requester,
@@ -36,12 +38,12 @@ async def credit_next(requester: str, customer_id: int) -> dict[str, Any]:
             "pod": os.environ.get("HOSTNAME", ""),
         },
     )
+    await asyncio.sleep(CREDIT_PACE_SECONDS)
+    return result
 
 
-# Metadata-only, for Catalyst's LangGraphMapper — call_tools invokes
-# credit_next directly. The mapper's fallback tool scan requires
-# callable(candidate), but a StructuredTool instance isn't callable, so the
-# raw tool object gets silently rejected; a plain function proxy passes.
+# Metadata-only stand-in for Catalyst's Agent UI — a StructuredTool isn't
+# callable(), which the mapper's tool scan requires, so it needs a plain function.
 def _credit_next_metadata_proxy(*_args, **_kwargs):
     raise NotImplementedError("metadata-only stand-in for Catalyst's Agent UI — never invoked")
 
@@ -77,10 +79,8 @@ async def _call_tools_impl(state: BankerState) -> dict:
     return {"last_result": result}
 
 
-# diagrid.agent.langgraph only registers a node's *sync* callable (`.func`);
-# `async def` nodes have `.func is None` and silently fail to register. These
-# plain-def wrappers return the coroutine unawaited — the Dapr executor
-# awaits it via its `asyncio.iscoroutine(result)` branch.
+# diagrid.agent.langgraph only registers sync node callables, so these
+# plain-def wrappers return the coroutine unawaited for the executor to await.
 def call_model(state: BankerState):
     return _call_model_impl(state)
 
@@ -104,11 +104,13 @@ def build_graph():
 
 
 def build_runner() -> DaprWorkflowGraphRunner:
-    # 100 credits × 2 steps (decide, credit_next) = 200; 400 gives headroom.
+    # LangGraph agent definition with a DaprWorkflowGraphRunner wrapper
+    # Each /schedule-one starts a new workflow instance against this runner,
+    # Steps: 100 credits × 2 steps (decide, credit_next) = 200; 400 gives headroom.
     return DaprWorkflowGraphRunner(
         graph=build_graph(),
         name="banker",
         max_steps=400,
-        role="Banker worker",
-        goal="Process one customer's credit tasks until none remain",
+        role="Bank Creditor",
+        goal="Credit a customer's account by $100, one dollar at a time.",
     )

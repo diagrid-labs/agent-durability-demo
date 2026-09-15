@@ -50,7 +50,7 @@ function createTelemetry(initial) {
     startedAt: nowMs(),
     agents: [],
     customers: [],
-    counters: { txProcessed: 0, txLost: 0, restarts: 0, mcpQueries: 0 },
+    counters: { txProcessed: 0, txLost: 0, killed: 0, mcpQueries: 0 },
     chaos: {
       activeWave: null, azDown: null, latencyUntil: 0, dropNext: 0,
       // Pod fleet from /chaos/pods. `victim` = pod with the most workflows,
@@ -133,7 +133,6 @@ function createTelemetry(initial) {
       if (a.status === 'dead' && a.restartingUntil && t >= a.restartingUntil) {
         a.status = 'restarting';
         a.restartingUntil = t + 700 + Math.random() * 600;
-        state.counters.restarts++;
       } else if (a.status === 'restarting' && a.restartingUntil && t >= a.restartingUntil) {
         a.status = state.run.active ? 'alive' : 'idle';
         a.restartingUntil = 0;
@@ -145,7 +144,6 @@ function createTelemetry(initial) {
         if (a && a.status === 'dead') {
           a.status = 'restarting';
           a.restartingUntil = t + 800 + Math.random() * 700;
-          state.counters.restarts++;
         }
       }
       state.chaos.azDown = null;
@@ -350,6 +348,7 @@ function createTelemetry(initial) {
             const a = state.agents[Number(s) - 1];
             if (!a) continue;
             if (status === 'dead') {
+              if (a.status !== 'dead') state.counters.killed++;
               a.status = 'dead';
               a.restartingUntil = t + 1500 + Math.random() * 1500;
             } else {
@@ -388,7 +387,7 @@ function createTelemetry(initial) {
       lastApplied = 0;
       firstStatus = true;
       lastMcpId = 0;
-      state.counters = { txProcessed: 0, txLost: 0, restarts: 0, mcpQueries: 0 };
+      state.counters = { txProcessed: 0, txLost: 0, killed: 0, mcpQueries: 0 };
       state.activity = [];
       state.chaos = { activeWave: null, azDown: null, latencyUntil: 0, dropNext: 0 };
       state.mcp.lines = [];

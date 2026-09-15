@@ -1,16 +1,5 @@
 """Plain LangGraph graph for the Bank Creditor demo — no Dapr, no Catalyst.
-
-Mirrors services/agent/agent_worker/agent.py's graph shape exactly (same
-BankerState, same credit_next tool, same agent/tools loop) but with no
-DaprWorkflowGraphRunner wrapping. Durability here is whatever plain LangGraph
-gives you for free (nothing, once the process dies) — that absence is the
-point of this deployment; see docs/LOCAL_DAPR.md and CLAUDE.md for the
-comparison this exists to demonstrate.
-
-Since there's no diagrid.agent.langgraph node registry involved, the
-`async def` node gotcha documented in CLAUDE.md / the other agent.py doesn't
-apply here — plain LangGraph nodes can just be `async def` directly.
-"""
+Same shape as services/agent-langgraph's graph, but with nothing durable underneath."""
 
 import os
 from typing import Any, Optional, TypedDict
@@ -32,14 +21,8 @@ class BankerState(TypedDict):
 
 @tool
 async def credit_next(requester: str, customer_id: int) -> dict[str, Any]:
-    """Claim, evaluate, and (if needed) apply this customer's next $1 credit
-    — one MCP call per credit. `customer_id` is the account this instance is
-    permanently bound to for the whole run; pass `requester` (your stable
-    instance identity) every call so replays claim the same in-flight credit
-    instead of popping a new one.
-
-    Returns {done: true} once that customer's 100 credits are exhausted,
-    otherwise {done: false, applied, tx_id, balance, n}."""
+    """Claim and apply this customer's next $1 credit. `requester` is this
+    instance's stable identity, so replays reclaim the same in-flight credit."""
     return await call_tool(
         "credit_next",
         {

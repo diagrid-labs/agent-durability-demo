@@ -316,9 +316,6 @@ def build_app() -> FastAPI:
                 f"pod-kill: deleted {len(killed_pods)} pods · "
                 f"{', '.join(killed_pods)} · {len(affected_slots)} slots affected",
             )
-            restarted = result.get("catalyst_sidecar", {}).get("restarted")
-            if restarted:
-                log_mcp("chaos", f"catalyst sidecar restart: {', '.join(restarted)}")
             # Reclaim slots immediately so the replenisher backfills fast.
             sweep = await orch.sweep(timeout_seconds=0.0)
             result["released_after_kill"] = sweep.get("released")
@@ -371,9 +368,6 @@ def build_app() -> FastAPI:
                 f"az-kill zone={zone}: deleted {len(killed_pods)} pods · "
                 f"{len(affected_slots)} slots affected",
             )
-            restarted = result.get("catalyst_sidecar", {}).get("restarted")
-            if restarted:
-                log_mcp("chaos", f"catalyst sidecar restart: {', '.join(restarted)}")
             sweep = await orch.sweep(timeout_seconds=0.0)
             result["released_after_kill"] = sweep.get("released")
             if affected_slots:

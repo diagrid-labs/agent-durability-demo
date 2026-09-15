@@ -1,5 +1,5 @@
 """Deterministic decision function: reacts only to the last credit_next
-result, so it stays a pure function of a small, fixed-size state dict."""
+result, keeping state fixed-size instead of an ever-growing chat transcript."""
 
 from typing import Any
 

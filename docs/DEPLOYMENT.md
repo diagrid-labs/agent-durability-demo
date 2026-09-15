@@ -50,7 +50,7 @@ docker buildx build --platform linux/amd64 \
 
 docker buildx build --platform linux/amd64 \
   -t $REGISTRY/bank-creditor-agent:0.1.0 \
-  --push services/agent
+  --push services/agent-langgraph
 ```
 
 (Drop `--platform linux/amd64` if your laptop already matches the cluster, or change it to `linux/arm64` for ARM clusters.)
@@ -141,7 +141,7 @@ docker buildx build --platform linux/amd64 \
 kubectl -n $NS rollout restart deployment/mcp
 ```
 
-(Agent: same pattern with `services/agent` build context, restart `deployment/agent`.)
+(Agent: same pattern with `services/agent-langgraph` build context, restart `deployment/agent`.)
 
 ### Tear down
 
@@ -164,7 +164,7 @@ Full instructions live in [**CATALYST.md**](./CATALYST.md). Quick outline:
 1. Provision the project with `--enable-managed-workflow --enable-agent-infrastructure`.
 2. Create the `agent-worker` app-id. `--enable-agent-infrastructure` auto-provisions an `agent-memory` state store you can reuse.
 3. `docker compose -f local/compose.yaml up -d --build`.
-4. `cd services/agent && uv sync`.
+4. `cd services/agent-langgraph && uv sync`.
 5. Register the MCP service as a Catalyst `MCPServer` and grant `agent-worker` access to its tools — see [CATALYST.md](./CATALYST.md)'s MCP section for the exact `diagrid mcpserver create` / `access grant` commands.
 6. `diagrid dev run --file dapr.yaml --project <your-project> --skip-managed-kv --skip-managed-pubsub --skip-default-resiliency`.
 

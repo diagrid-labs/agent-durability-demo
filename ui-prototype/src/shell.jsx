@@ -100,10 +100,10 @@ function Counters({ state }) {
       padding: '10px 14px 0',
     }}>
       <Counter label="Transactions processed" value={fmtInt(state.counters.txProcessed)} sub="$1 per tx" />
+      <Counter label="Agents killed" value={fmtInt(state.counters.killed)} sub="chaos-injected" />
       <Counter label="Transactions lost" value={fmtInt(state.counters.txLost)}
         accent={state.counters.txLost === 0 ? 'var(--green)' : 'var(--red)'}
         sub={state.counters.txLost === 0 ? 'durable execution' : 'investigate'} />
-      <Counter label="Agent restarts" value={fmtInt(state.counters.restarts)} sub="auto-recovered" />
       <Counter label="Agents alive" value={`${alive} / ${totalAgents}`}
         accent={alive === totalAgents ? 'var(--green)' : alive / totalAgents > 0.7 ? 'var(--amber)' : 'var(--red)'}
         sub={`${((alive/totalAgents)*100).toFixed(0)}% online`} />

@@ -12,7 +12,7 @@ under plain local Dapr" note on the pod-kill-mid-activity gotcha in `CLAUDE.md`.
 
 ## Why a patch is required
 
-`services/agent/agent_worker/mcp_client.py` hardcodes Catalyst's MCP proxy path
+`services/agent-langgraph/agent_worker/mcp_client.py` hardcodes Catalyst's MCP proxy path
 (`$DAPR_HTTP_ENDPOINT/v1.0/diagrid/mcp/$MCP_SERVER_NAME`), which doesn't exist outside
 Catalyst — there's no plain-Dapr fallback in the codebase (see `CLAUDE.md`'s gotcha on this;
 it's an intentional simplification, not an oversight). To run locally without Catalyst, you
@@ -56,7 +56,7 @@ curl -s http://localhost:9000/healthz   # {"status":"ok"}
 ## 3. Set up the agent's Python environment
 
 ```bash
-cd services/agent
+cd services/agent-langgraph
 uv sync
 ```
 
@@ -69,13 +69,13 @@ one to the other if one process dies.
 
 ```bash
 # Terminal / background job A
-cd services/agent
+cd services/agent-langgraph
 STUB_LLM=true MCP_DIRECT_URL=http://localhost:9000/mcp/ HOSTNAME=local-a \
   dapr run --app-id bank-agent-creditor --app-port 8000 -H 3500 -G 50001 -M 9091 \
   -- uv run uvicorn agent_worker.main:app --host 0.0.0.0 --port 8000
 
 # Terminal / background job B
-cd services/agent
+cd services/agent-langgraph
 STUB_LLM=true MCP_DIRECT_URL=http://localhost:9000/mcp/ HOSTNAME=local-b \
   dapr run --app-id bank-agent-creditor --app-port 8001 -H 3501 -G 50002 -M 9092 \
   -- uv run uvicorn agent_worker.main:app --host 0.0.0.0 --port 8001
@@ -130,7 +130,7 @@ count a "freeze" unless you've verified the survivor was healthy the whole time.
 ```bash
 kill -9 <any remaining dapr run / daprd / uv / uvicorn PIDs>
 docker compose -f local/compose.yaml down
-git checkout -- services/agent/agent_worker/mcp_client.py   # revert the patch above
+git checkout -- services/agent-langgraph/agent_worker/mcp_client.py   # revert the patch above
 ```
 
 ## What this found (2026-07-31)
@@ -149,7 +149,7 @@ path is at fault.
 
 ## Unrelated thing you'll probably hit
 
-`mcp>=1.2.0` (both `services/agent/pyproject.toml` and `services/mcp/pyproject.toml`) had no
+`mcp>=1.2.0` (both `services/agent-langgraph/pyproject.toml` and `services/mcp/pyproject.toml`) had no
 upper bound until `mcp` 2.0.0 shipped and relocated/removed `FastMCP`, breaking the build
 (`ModuleNotFoundError: No module named 'mcp.server.fastmcp'`). Already fixed with a
 `<2.0.0` pin — just noting it here in case you hit the same error on a machine with an

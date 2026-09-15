@@ -1,14 +1,5 @@
-"""FastAPI wrapper — same route surface as services/agent/agent_worker/main.py
-so services/mcp/mcp_server/replenisher.py works against this agent unchanged.
-It only ever POSTs /schedule-one and /agent/instances/{id}/terminate over
-HTTP; it has no idea (and doesn't need to) that there's no Dapr underneath.
-
-The durability story is deliberately absent: `_tasks` is a plain in-memory
-dict. If this process dies, every task in it — and whatever mid-credit
-progress that account had — is just gone. No other replica can see it, let
-alone resume it. That's the whole point of this deployment; see agent.py's
-module docstring.
-"""
+"""FastAPI wrapper with the same route surface as services/agent-langgraph's main.py.
+`_tasks` is a plain in-memory dict — if this process dies, its progress is gone."""
 
 import asyncio
 import logging

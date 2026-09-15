@@ -25,11 +25,6 @@ class PodChaosController:
         self._label_selector = os.environ.get(
             "POD_CHAOS_LABEL_SELECTOR", "app.kubernetes.io/name=agent"
         )
-        # Catalyst's remote Dapr sidecar for this app-id, in the project's own
-        # `prj-<id>` namespace. Empty means the capability is off — only
-        # bank-creditor's mcp release sets these (see deploy/mcp).
-        self._sidecar_namespace = os.environ.get("CATALYST_SIDECAR_NAMESPACE", "")
-        self._sidecar_app_id = os.environ.get("CATALYST_SIDECAR_APP_ID", "")
         self._init_client()
 
     def _init_client(self) -> None:
@@ -61,42 +56,7 @@ class PodChaosController:
             "available": self._enabled,
             "namespace": self._namespace,
             "label_selector": self._label_selector,
-            "sidecar_restart_configured": bool(
-                self._sidecar_namespace and self._sidecar_app_id
-            ),
         }
-
-    def _restart_catalyst_sidecar(self) -> dict[str, Any]:
-        """Best-effort: delete Catalyst's sidecar pod for this app-id, called
-        after every pod-kill/AZ-kill to test whether it unsticks activities
-        orphaned by the kill (see CLAUDE.md's pod-kill-mid-activity gotcha).
-        No-ops when not configured.
-
-        Always unconditional, even for AZ-kill: the sidecar's single replica
-        runs on the `control` nodepool (zone `"0"`), never the `agents`
-        nodepool's real AZs, so it has no zone to match against."""
-        if not self._enabled or not self._sidecar_namespace or not self._sidecar_app_id:
-            return {"attempted": False}
-        selector = f"app.kubernetes.io/name=sidecar,dapr-app-id={self._sidecar_app_id}"
-        try:
-            pods = self._v1.list_namespaced_pod(
-                self._sidecar_namespace, label_selector=selector
-            )
-        except Exception as e:  # noqa: BLE001
-            return {"attempted": True, "restarted": [], "error": str(e)}
-        candidates = [p for p in pods.items if p.metadata.deletion_timestamp is None]
-        restarted: list[str] = []
-        errors: list[str] = []
-        for p in candidates:
-            try:
-                self._v1.delete_namespaced_pod(p.metadata.name, self._sidecar_namespace)
-                restarted.append(p.metadata.name)
-            except Exception as e:  # noqa: BLE001
-                errors.append(f"{p.metadata.name}: {e}")
-        result: dict[str, Any] = {"attempted": True, "restarted": restarted}
-        if errors:
-            result["errors"] = errors
-        return result
 
     def list_live_pods(self) -> list[dict[str, Any]]:
         """Currently-running agent pods with node + zone, for the UI's
@@ -162,8 +122,6 @@ class PodChaosController:
         }
         if errors:
             result["errors"] = errors
-        if killed:
-            result["catalyst_sidecar"] = self._restart_catalyst_sidecar()
         return result
 
     def list_nodes(self) -> list[dict[str, Any]]:
@@ -229,7 +187,6 @@ class PodChaosController:
         return {
             "available": True,
             "killed": [pod_name],
-            "catalyst_sidecar": self._restart_catalyst_sidecar(),
         }
 
     def kill_random(self, count: int) -> dict[str, Any]:
@@ -267,6 +224,4 @@ class PodChaosController:
         }
         if errors:
             result["errors"] = errors
-        if killed:
-            result["catalyst_sidecar"] = self._restart_catalyst_sidecar()
         return result

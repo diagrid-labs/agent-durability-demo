@@ -53,36 +53,4 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "mcp.name" . }}
     namespace: {{ .Release.Namespace }}
-{{- if .Values.catalystSidecar.enabled }}
----
-# Cross-namespace: lets this MCP account restart Catalyst's sidecar for this
-# app-id in its prj-<id> namespace — one pod, not the shared control plane.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: {{ include "mcp.name" . }}-sidecar-restarter
-  namespace: {{ .Values.catalystSidecar.namespace }}
-  labels:
-    {{- include "mcp.labels" . | nindent 4 }}
-rules:
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["list", "get", "delete"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: {{ include "mcp.name" . }}-sidecar-restarter
-  namespace: {{ .Values.catalystSidecar.namespace }}
-  labels:
-    {{- include "mcp.labels" . | nindent 4 }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: {{ include "mcp.name" . }}-sidecar-restarter
-subjects:
-  - kind: ServiceAccount
-    name: {{ include "mcp.name" . }}
-    namespace: {{ .Release.Namespace }}
-{{- end }}
 {{- end }}

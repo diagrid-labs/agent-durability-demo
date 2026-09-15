@@ -71,10 +71,8 @@ class ScheduleOneBody(BaseModel):
 
 
 async def _schedule(instance_id: str, customer_id: int) -> None:
-    """Schedule one graph run under `instance_id`, returning as soon as
-    Catalyst confirms acceptance (first `workflow_started` event) rather than
-    waiting for the graph to finish. `workflow_id` is what `/status`,
-    `/terminate`, and `/purge` key off of — otherwise a random UUID."""
+    """Schedule one graph run under `instance_id` and return as soon as
+    Catalyst confirms acceptance, without waiting for the graph to finish."""
     runner = app.state.runner
     events = runner.run_async(
         input={

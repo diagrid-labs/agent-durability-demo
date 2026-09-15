@@ -55,11 +55,3 @@ rbac:
 
 podChaos:
   labelSelector: "app.kubernetes.io/name=agent"
-
-# Restarts Catalyst's remote Dapr sidecar for this app-id on every pod-kill/
-# AZ-kill, to test whether that unsticks orphaned activities (see CLAUDE.md).
-# Off by default — opt in per deployment via --set. Only bank-creditor sets this.
-catalystSidecar:
-  enabled: false
-  namespace: ""
-  appId: ""

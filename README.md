@@ -1,8 +1,8 @@
 # Bank Creditor Demo
 
-LangGraph agent durability demo, running as durable Dapr Workflows via Diagrid Catalyst. 100 agents credit 10 customer accounts from $100 → $200, $1 at a time, while chaos is injected.
+LangGraph agent durability demo, running as durable Dapr Workflows via Diagrid Catalyst. 100 agents credit 10 customer accounts from $100 → $200, $1 at a time, while chaos is continuously being injected.
 
-**Invariant** — every account finishes at exactly $200, total transaction count = 1000, regardless of pod kills, AZ evictions, dropped MCP calls, or latency injection. Exactly-once credits are enforced at the DB via a composite `(execution_run_id, tx_id)` primary key with `ON CONFLICT DO NOTHING`.
+At the finish of every demo flow run, every account finishes at exactly $200, with a total transaction count of 1000, regardless of pod kills, AZ evictions, dropped MCP calls, or latency injection. Exactly-once credits are enforced at the database level via a composite `(execution_run_id, tx_id)` primary key.
 
 ## Architecture
 
@@ -31,7 +31,7 @@ The agent reaches its Postgres-backed tools (`get_balance`, `credit_account`, et
 ## Documentation
 
 - **[Deployment](docs/DEPLOYMENT.md)** — deploy to Kubernetes (any conformant cluster), or run locally against Catalyst
-  - [Catalyst Self-Hosted](docs/CATALYST_SELF_HOSTED.md) — Catalyst control plane inside your own cluster
+  - [Catalyst BYOC](docs/CATALYST_SELF_HOSTED.md) — Catalyst control plane inside your own cluster
   - [Catalyst local dev](docs/CATALYST.md) — `diagrid dev run` on your laptop
 - **[Demo flow](docs/DEMO_FLOW.md)** — presenter script for running the live demo
 - **[Troubleshooting](docs/TROUBLESHOOTING.md)** — common failures across all deploy paths

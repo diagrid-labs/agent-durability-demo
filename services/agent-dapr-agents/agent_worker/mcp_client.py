@@ -12,10 +12,8 @@ MCP_URL = f"{DAPR_HTTP_ENDPOINT}/v1.0/diagrid/mcp/{MCP_SERVER_NAME}"
 
 
 async def call_tool(tool: str, args: dict[str, Any]) -> Any:
-    """Call a tool on the Postgres MCP server through Catalyst's managed MCP
-    proxy. Opens a fresh session per call — simpler and safer than sharing
-    one ClientSession across the many concurrent workflow activities this
-    demo runs, at the cost of an extra initialize() round trip per call."""
+    """Call a tool through Catalyst's MCP proxy. Opens a fresh session per
+    call rather than sharing one across concurrent workflow activities."""
     headers = {"dapr-api-token": DAPR_API_TOKEN}
     async with streamablehttp_client(url=MCP_URL, headers=headers) as (read, write, _):
         async with ClientSession(read, write) as session:

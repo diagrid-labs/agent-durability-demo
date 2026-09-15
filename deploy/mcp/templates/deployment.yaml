@@ -41,10 +41,6 @@ spec:
               value: {{ .Values.agent.httpBase | quote }}
             - name: POD_CHAOS_LABEL_SELECTOR
               value: {{ .Values.podChaos.labelSelector | quote }}
-            - name: CATALYST_SIDECAR_NAMESPACE
-              value: {{ .Values.catalystSidecar.namespace | quote }}
-            - name: CATALYST_SIDECAR_APP_ID
-              value: {{ .Values.catalystSidecar.appId | quote }}
             - name: DEPLOYMENT_LABEL
               value: {{ .Values.deploymentLabel | quote }}
             {{- /* Computed from the release namespace so this is correct for

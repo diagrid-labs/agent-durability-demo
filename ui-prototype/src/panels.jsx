@@ -90,7 +90,7 @@ function ChaosPanel({ feed, state }) {
                   disabled={!state.chaos.victim}
                   style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {state.chaos.victim
-              ? `Pod failure (~${state.chaos.victim.workflow_count} workflows)`
+              ? `Pod failure (${state.chaos.victim.workflow_count} agents)`
               : 'Pod failure'}
           </button>
           <button className="btn sm" onClick={() => feed.control.killAZ()}
@@ -98,18 +98,18 @@ function ChaosPanel({ feed, state }) {
                   disabled={!state.chaos.zoneVictim}
                   style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {state.chaos.zoneVictim
-              ? `AZ failure: ${state.chaos.zoneVictim.zone} (~${state.chaos.zoneVictim.workflow_count} workflows)`
+              ? `AZ failure: ${state.chaos.zoneVictim.zone} (${state.chaos.zoneVictim.workflow_count} agents)`
               : 'AZ failure'}
           </button>
           <button className="btn sm" onClick={() => feed.control.latencyJitter(10000)}
                   title="Slow downstream (connection pool timeout, slow query). Workflows complete, just slower."
                   style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            MCP Slowdown · 10s window
+            MCP Latency: 10s
           </button>
           <button className="btn sm" onClick={() => feed.control.dropTx()}
                   title="Next MCP call returns 5xx. Workflow retries; idempotency prevents double-credit."
                   style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            Force MCP Call Error
+            MCP tool call failure
           </button>
         </div>
       </div>

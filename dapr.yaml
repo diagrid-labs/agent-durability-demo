@@ -6,7 +6,7 @@ common:
   logLevel: info
 apps:
   - appID: bank-agent-creditor
-    appDirPath: ./services/agent
+    appDirPath: ./services/agent-langgraph
     daprHTTPPort: 3500
     appPort: 8000
     appProtocol: http
