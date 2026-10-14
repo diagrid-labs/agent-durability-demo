@@ -73,8 +73,11 @@ async def _call_model_impl(state: BankerState) -> dict:
 
 
 async def _call_tools_impl(state: BankerState) -> dict:
+    # The pod tag shows in LangSmith which worker ran each credit, so a retry
+    # after a pod kill visibly lands on a different pod.
     result = await credit_next.ainvoke(
-        {"requester": state["requester"], "customer_id": state["customer_id"]}
+        {"requester": state["requester"], "customer_id": state["customer_id"]},
+        config={"metadata": {"pod": os.environ.get("HOSTNAME", "")}},
     )
     return {"last_result": result}
 

@@ -128,6 +128,18 @@ Hover the buttons to show tooltips:
 
 > "And they're all working their way toward completion. No matter which chaos we injected — pod kill, AZ outage, latency, errors — the workflows know where they are and keep making progress."
 
+## 7b. Optional: LangSmith — "your LangGraph tooling still works"
+
+Only if LangSmith tracing is on (see [DEPLOYMENT.md](./DEPLOYMENT.md) step 7).
+
+**Click:** **Open in LangSmith ↗** in the Bank Creditor UI top bar, then open one of the `LangGraph` traces (filter on `thread_id` = `customer-3` to pick one account).
+
+**Pitch:**
+> "If your team already uses LangSmith, nothing changes. This is the same agent, traced in LangSmith like any LangGraph app. Each `agent` and `tools` step is a Catalyst activity underneath, and each `credit_next` call is tagged with the pod that ran it."
+
+**Point at a step around the pod kill:**
+> "Here's where we killed the pod. The step that was in flight was picked up by a different pod, and the trace carries on from there. LangSmith shows you what the agent did; Catalyst is what made sure it kept doing it."
+
 ## 8. Close — "the invariant"
 
 **Screen:** back to the Bank Creditor UI

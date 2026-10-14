@@ -118,6 +118,29 @@ echo "http://$MCP_IP/"
 
 If you set `service.azureDnsLabel`, the URL is `http://<label>.<region>.cloudapp.azure.com/` (no port — Service is on 80 by default).
 
+### 7. Optional: LangSmith tracing
+
+The LangGraph agent can send its traces to LangSmith, so you can show the same run in the LangSmith UI next to Catalyst. Each workflow is one `LangGraph` trace, with a child run per graph node (`agent`, `tools`) and a `credit_next` tool run tagged with the pod that ran it.
+
+```bash
+kubectl -n $NS create secret generic langsmith-api-key \
+  --from-literal=LANGSMITH_API_KEY=<your LangSmith API key>
+
+helm upgrade agent deploy/agent -n $NS --reuse-values \
+  --set langsmith.enabled=true \
+  --set langsmith.project=bank-creditor
+# EU LangSmith orgs also need: --set langsmith.endpoint=https://eu.api.smith.langchain.com
+```
+
+After the first run the project exists in LangSmith. Copy its URL and give it to the MCP chart, which adds an **Open in LangSmith** button to the UI top bar:
+
+```bash
+helm upgrade mcp deploy/mcp -n $NS --reuse-values \
+  --set langsmithUrl=<LangSmith project URL>
+```
+
+To turn tracing off again: `helm upgrade agent deploy/agent -n $NS --reuse-values --set langsmith.enabled=false`.
+
 > If the LB IP isn't reachable from your laptop, see the AKS [backend-pool gotcha](./TROUBLESHOOTING.md#public-lb-ip-exists-but-external-traffic-times-out). `kubectl -n $NS port-forward svc/mcp 8080:80` is the reliable fallback.
 
 ### 7. Verify the invariant

@@ -39,6 +39,17 @@ agent:
     # Secret with key OPENAI_API_KEY. Only required when mode=real.
     apiKeySecret: ""
 
+# LangSmith tracing. diagrid.agent.langgraph reads LANGSMITH_* and sends one
+# trace per workflow, with a child run per graph node. apiKeySecret must exist
+# in the namespace before install (see docs/DEPLOYMENT.md, LangSmith section).
+langsmith:
+  enabled: false
+  project: bank-creditor
+  # EU orgs use https://eu.api.smith.langchain.com.
+  endpoint: https://api.smith.langchain.com
+  apiKeySecret: langsmith-api-key
+  apiKeySecretKey: LANGSMITH_API_KEY
+
 resources:
   requests:
     cpu: 200m
