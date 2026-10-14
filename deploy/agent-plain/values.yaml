@@ -24,6 +24,17 @@ mcp:
 
 logLevel: INFO
 
+# LangSmith tracing. Plain LangGraph traces natively when LANGSMITH_TRACING is
+# set. Its own project keeps these runs apart from the Catalyst variant's.
+# apiKeySecret must exist in this chart's namespace (docs/DEPLOYMENT.md step 7).
+langsmith:
+  enabled: false
+  project: bank-creditor-plain
+  # EU orgs use https://eu.api.smith.langchain.com.
+  endpoint: https://api.smith.langchain.com
+  apiKeySecret: langsmith-api-key
+  apiKeySecretKey: LANGSMITH_API_KEY
+
 resources:
   requests:
     cpu: 200m

@@ -139,6 +139,8 @@ helm upgrade mcp deploy/mcp -n $NS --reuse-values \
   --set langsmithUrl=<LangSmith project URL>
 ```
 
+The plain LangGraph comparison (`deploy/agent-plain`, no Catalyst) has the same `langsmith` block and traces to its own project, `bank-creditor-plain`. Create the same secret in its namespace, set `langsmith.enabled=true` on that release, and set `langsmithUrl` on that namespace's MCP release.
+
 To turn tracing off again: `helm upgrade agent deploy/agent -n $NS --reuse-values --set langsmith.enabled=false`.
 
 > If the LB IP isn't reachable from your laptop, see the AKS [backend-pool gotcha](./TROUBLESHOOTING.md#public-lb-ip-exists-but-external-traffic-times-out). `kubectl -n $NS port-forward svc/mcp 8080:80` is the reliable fallback.

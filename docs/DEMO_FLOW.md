@@ -140,6 +140,9 @@ Only if LangSmith tracing is on (see [DEPLOYMENT.md](./DEPLOYMENT.md) step 7).
 **Point at a step around the pod kill:**
 > "Here's where we killed the pod. The step that was in flight was picked up by a different pod, and the trace carries on from there. LangSmith shows you what the agent did; Catalyst is what made sure it kept doing it."
 
+**Then the contrast:** open the `bank-creditor-plain` project, after running the same pod kill against the plain LangGraph deployment.
+> "Same agent, same LangGraph code, no Catalyst. Every trace on the killed pod stops at the moment of the kill and never finishes, and nothing picks those accounts back up. With Catalyst, the same kill is a blip in the trace."
+
 ## 8. Close — "the invariant"
 
 **Screen:** back to the Bank Creditor UI

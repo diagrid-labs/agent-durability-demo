@@ -45,6 +45,19 @@ spec:
               value: {{ .Values.mcp.url | quote }}
             - name: STUB_LLM
               value: "true"
+            {{- if (.Values.langsmith).enabled }}
+            - name: LANGSMITH_TRACING
+              value: "true"
+            - name: LANGSMITH_PROJECT
+              value: {{ .Values.langsmith.project | quote }}
+            - name: LANGSMITH_ENDPOINT
+              value: {{ .Values.langsmith.endpoint | quote }}
+            - name: LANGSMITH_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.langsmith.apiKeySecret }}
+                  key: {{ .Values.langsmith.apiKeySecretKey }}
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /healthz
