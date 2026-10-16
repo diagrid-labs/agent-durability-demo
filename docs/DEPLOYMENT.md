@@ -126,7 +126,7 @@ The LangGraph agent can send its traces to LangSmith, so you can show the same r
 kubectl -n $NS create secret generic langsmith-api-key \
   --from-literal=LANGSMITH_API_KEY=<your LangSmith API key>
 
-helm upgrade agent deploy/agent -n $NS --reuse-values \
+helm upgrade agent deploy/agent -n $NS --reset-then-reuse-values \
   --set langsmith.enabled=true \
   --set langsmith.project=bank-creditor
 # EU LangSmith orgs also need: --set langsmith.endpoint=https://eu.api.smith.langchain.com
@@ -135,16 +135,18 @@ helm upgrade agent deploy/agent -n $NS --reuse-values \
 
 A service key is scoped to the whole LangSmith organization, so without the workspace ID every trace upload gets a `403 Forbidden`.
 
+Use `--reset-then-reuse-values` (Helm 3.14+), not `--reuse-values`. A release installed before this chart had a `langsmith` block has none of its defaults stored, so `--reuse-values` leaves the secret name empty and the upgrade fails with `secretKeyRef.name: Invalid value: ""`.
+
 After the first run the project exists in LangSmith. Copy its URL and give it to the MCP chart, which adds an **Open in LangSmith** button to the UI top bar:
 
 ```bash
-helm upgrade mcp deploy/mcp -n $NS --reuse-values \
+helm upgrade mcp deploy/mcp -n $NS --reset-then-reuse-values \
   --set langsmithUrl=<LangSmith project URL>
 ```
 
 The plain LangGraph comparison (`deploy/agent-plain`, no Catalyst) has the same `langsmith` block and traces to its own project, `bank-creditor-plain`. Create the same secret in its namespace, set `langsmith.enabled=true` on that release, and set `langsmithUrl` on that namespace's MCP release.
 
-To turn tracing off again: `helm upgrade agent deploy/agent -n $NS --reuse-values --set langsmith.enabled=false`.
+To turn tracing off again: `helm upgrade agent deploy/agent -n $NS --reset-then-reuse-values --set langsmith.enabled=false`.
 
 > If the LB IP isn't reachable from your laptop, see the AKS [backend-pool gotcha](./TROUBLESHOOTING.md#public-lb-ip-exists-but-external-traffic-times-out). `kubectl -n $NS port-forward svc/mcp 8080:80` is the reliable fallback.
 
