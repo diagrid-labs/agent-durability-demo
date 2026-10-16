@@ -1,6 +1,6 @@
 image:
-  repository: alicejgibbons/bank-creditor-agent-plain
-  tag: "0.1.0"
+  repository: public.ecr.aws/d3f9w4q8/bank-creditor-demo/agent-plain
+  tag: "0.2.0"
   # Always-pull so demo iteration on the same tag picks up freshly pushed
   # images without bumping the tag. Switch to IfNotPresent for production.
   pullPolicy: Always
@@ -23,6 +23,20 @@ mcp:
   url: http://mcp:80/mcp/
 
 logLevel: INFO
+
+# LangSmith tracing. Plain LangGraph traces natively when LANGSMITH_TRACING is
+# set. Its own project keeps these runs apart from the Catalyst variant's.
+# apiKeySecret must exist in this chart's namespace (docs/DEPLOYMENT.md step 7).
+langsmith:
+  enabled: false
+  project: bank-creditor-plain
+  # EU orgs use https://eu.api.smith.langchain.com.
+  endpoint: https://api.smith.langchain.com
+  # Required with an org-scoped service key (lsv2_sk_); copy it from the
+  # workspace's settings page. Leave empty for a personal key (lsv2_pt_).
+  workspaceId: ""
+  apiKeySecret: langsmith-api-key
+  apiKeySecretKey: LANGSMITH_API_KEY
 
 resources:
   requests:

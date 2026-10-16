@@ -33,10 +33,13 @@ function TopBar({ state, feed, onTogglePause }) {
   const run = state.run || {};
   // Labels which backend this page is talking to, one UI build for all.
   const [deploymentLabel, setDeploymentLabel] = useState(null);
+  const [langsmithUrl, setLangsmithUrl] = useState(null);
   useEffect(() => {
     let cancelled = false;
     fetch('/config').then(r => r.json()).then(cfg => {
-      if (!cancelled && cfg && cfg.label) setDeploymentLabel(cfg.label);
+      if (cancelled || !cfg) return;
+      if (cfg.label) setDeploymentLabel(cfg.label);
+      if (cfg.langsmithUrl) setLangsmithUrl(cfg.langsmithUrl);
     }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
@@ -75,6 +78,12 @@ function TopBar({ state, feed, onTogglePause }) {
           {feed.control.isPaused() ? '▶ Resume' : '❚❚ Pause'}
         </button>
         <button className="btn sm ghost" onClick={() => feed.control.reset()}>↺ Reset</button>
+        {langsmithUrl && (
+          <a className="btn sm ghost" href={langsmithUrl} target="_blank" rel="noopener noreferrer"
+             title="The agent's traces in LangSmith">
+            Open in LangSmith ↗
+          </a>
+        )}
       </div>
     </div>
   );

@@ -98,6 +98,7 @@ html, body {
   display: inline-flex; align-items: center; gap: 8px;
   white-space: nowrap;
   letter-spacing: -0.005em;
+  text-decoration: none;
 }
 .btn:hover { background: var(--bg-alt); border-color: var(--fg-3); }
 .btn:active { transform: translateY(0.5px); }

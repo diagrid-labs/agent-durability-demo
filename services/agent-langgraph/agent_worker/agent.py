@@ -73,8 +73,11 @@ async def _call_model_impl(state: BankerState) -> dict:
 
 
 async def _call_tools_impl(state: BankerState) -> dict:
+    # The pod tag shows in LangSmith which worker ran each credit, so a retry
+    # after a pod kill visibly lands on a different pod.
     result = await credit_next.ainvoke(
-        {"requester": state["requester"], "customer_id": state["customer_id"]}
+        {"requester": state["requester"], "customer_id": state["customer_id"]},
+        config={"metadata": {"pod": os.environ.get("HOSTNAME", "")}},
     )
     return {"last_result": result}
 
@@ -100,7 +103,13 @@ def build_graph():
     graph.add_edge(START, "agent")
     graph.add_conditional_edges("agent", should_use_tools)
     graph.add_edge("tools", "agent")
-    return graph.compile()
+    compiled = graph.compile()
+    # diagrid.agent.langgraph runs this condition as its own activity without
+    # the LangSmith parent, so each check would land as a separate trace.
+    # Remove once diagridio/python-ai#436 ships in a diagrid release.
+    for spec in compiled.builder.branches["agent"].values():
+        spec.path.trace = False
+    return compiled
 
 
 def build_runner() -> DaprWorkflowGraphRunner:
