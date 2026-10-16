@@ -1,7 +1,6 @@
 image:
   repository: public.ecr.aws/d3f9w4q8/bank-creditor-demo/agent
-  # The commit the image was built from.
-  tag: "1ef003f"
+  tag: "0.2.0"
   # Always-pull so a fresh push on the same tag is picked up without a bump.
   pullPolicy: Always
 

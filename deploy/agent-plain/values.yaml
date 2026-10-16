@@ -1,7 +1,6 @@
 image:
   repository: public.ecr.aws/d3f9w4q8/bank-creditor-demo/agent-plain
-  # The commit the image was built from.
-  tag: "1ef003f"
+  tag: "0.2.0"
   # Always-pull so demo iteration on the same tag picks up freshly pushed
   # images without bumping the tag. Switch to IfNotPresent for production.
   pullPolicy: Always

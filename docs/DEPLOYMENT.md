@@ -27,11 +27,11 @@ Storage class: the Postgres chart defaults to `managed-csi` (AKS). Override with
 
 ### 1. Choose an image registry
 
-The cluster needs to be able to pull from wherever you push to. The charts default to the demo's public ECR repositories in the Diagrid demo AWS account, tagged with the commit each image was built from:
+The cluster needs to be able to pull from wherever you push to. The charts default to the demo's public ECR repositories in the Diagrid demo AWS account, with semver tags:
 
 ```bash
 export REGISTRY=public.ecr.aws/d3f9w4q8/bank-creditor-demo   # chart default; pushing needs that AWS account
-export TAG=$(git rev-parse --short HEAD)
+export TAG=0.2.0                     # the chart default; bump it for a new release
 # Or any other accessible registry:
 # export REGISTRY=myacr.azurecr.io     # ACR
 # export REGISTRY=ghcr.io/myorg        # GHCR
@@ -166,7 +166,7 @@ kubectl -n $NS exec postgres-0 -- psql -U bankadmin -d bankdemo -c \
 ### Updating after code changes
 
 ```bash
-export TAG=$(git rev-parse --short HEAD)
+export TAG=0.2.1                     # next version; update the charts' image.tag to match
 docker buildx build --platform linux/amd64 \
   -t $REGISTRY/mcp:$TAG \
   -f services/mcp/Dockerfile --push .
