@@ -130,7 +130,10 @@ helm upgrade agent deploy/agent -n $NS --reuse-values \
   --set langsmith.enabled=true \
   --set langsmith.project=bank-creditor
 # EU LangSmith orgs also need: --set langsmith.endpoint=https://eu.api.smith.langchain.com
+# A service key (lsv2_sk_) also needs: --set langsmith.workspaceId=<workspace ID>
 ```
+
+A service key is scoped to the whole LangSmith organization, so without the workspace ID every trace upload gets a `403 Forbidden`.
 
 After the first run the project exists in LangSmith. Copy its URL and give it to the MCP chart, which adds an **Open in LangSmith** button to the UI top bar:
 

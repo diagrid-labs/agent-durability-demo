@@ -32,6 +32,9 @@ langsmith:
   project: bank-creditor-plain
   # EU orgs use https://eu.api.smith.langchain.com.
   endpoint: https://api.smith.langchain.com
+  # Required with an org-scoped service key (lsv2_sk_); copy it from the
+  # workspace's settings page. Leave empty for a personal key (lsv2_pt_).
+  workspaceId: ""
   apiKeySecret: langsmith-api-key
   apiKeySecretKey: LANGSMITH_API_KEY
 
