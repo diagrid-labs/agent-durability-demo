@@ -72,6 +72,8 @@ UI: `http://<host>/index.html` (or `localhost:9000` locally — same origin, no 
 
 **`DaprWorkflowGraphRunner` builds its own `WorkflowRuntime` with no concurrency knobs exposed**, and there's no `AGENT_STATE_STORE` env var — durability comes entirely from Dapr Workflow activity persistence. `stateStore.componentName` in `deploy/agent/values.yaml` still matters for non-Catalyst chart deploys (`stateStore.create: true`).
 
+**LangSmith tracing is env-only** — `diagrid.agent.langgraph` sends traces when `LANGSMITH_TRACING=true` (agent chart `langsmith.enabled`); the only tracing code in the agent is the `pod` metadata on the `credit_next` call. The root `LangGraph` trace shows as finished right after `/schedule-one`, because `_schedule` closes the `run_async` generator after the first event and the SDK closes the root trace in its `finally`; the SDK sets the real end time again when the workflow completes. Child runs keep arriving in between.
+
 **The replenisher lives on the MCP server, not the agent.** `Replenisher` in `services/mcp/mcp_server/replenisher.py` owns the loop and calls agent's `/schedule-one`.
 
 **State-store component name is `agent-memory`**, auto-provisioned by Catalyst `--enable-agent-infrastructure`. The agent chart defaults `stateStore.componentName` to this with `create: false`.
@@ -106,6 +108,7 @@ gateway:
 | Catalyst bring-up + provisioning | `docs/CATALYST_SELF_HOSTED.md`, `docs/CATALYST.md` |
 | Node topology (labels, zone spread) | `deploy/agent/values.yaml:topologySpread` |
 | Common operational failures + fixes | `docs/TROUBLESHOOTING.md` |
+| LangSmith tracing setup | `docs/DEPLOYMENT.md` step 7, `deploy/agent/values.yaml:langsmith` |
 | Testing Dapr Workflow behavior without Catalyst (debug-only) | `docs/LOCAL_DAPR.md` |
 
 ## Code style for this repo

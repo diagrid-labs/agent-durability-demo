@@ -14,3 +14,6 @@ apps:
     env:
       STUB_LLM: "true"
       LOG_LEVEL: INFO
+      # LangSmith tracing: uncomment, and export LANGSMITH_API_KEY in your shell.
+      # LANGSMITH_TRACING: "true"
+      # LANGSMITH_PROJECT: bank-creditor

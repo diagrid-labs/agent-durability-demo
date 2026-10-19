@@ -43,6 +43,8 @@ spec:
               value: {{ .Values.podChaos.labelSelector | quote }}
             - name: DEPLOYMENT_LABEL
               value: {{ .Values.deploymentLabel | quote }}
+            - name: LANGSMITH_URL
+              value: {{ .Values.langsmithUrl | default "" | quote }}
             {{- /* Computed from the release namespace so this is correct for
                   any namespace automatically — no per-deployment override to
                   remember. FastMCP rejects unknown Host headers by default

@@ -27,10 +27,11 @@ Storage class: the Postgres chart defaults to `managed-csi` (AKS). Override with
 
 ### 1. Choose an image registry
 
-The cluster needs to be able to pull from wherever you push to. Docker Hub is the default in the charts:
+The cluster needs to be able to pull from wherever you push to. The charts default to the demo's public ECR repositories in the Diagrid demo AWS account, with semver tags:
 
 ```bash
-export REGISTRY=alicejgibbons          # docker hub default in the charts
+export REGISTRY=public.ecr.aws/d3f9w4q8/bank-creditor-demo   # chart default; pushing needs that AWS account
+export TAG=0.2.0                     # the chart default; bump it for a new release
 # Or any other accessible registry:
 # export REGISTRY=myacr.azurecr.io     # ACR
 # export REGISTRY=ghcr.io/myorg        # GHCR
@@ -45,11 +46,11 @@ If your laptop arch differs from the cluster nodes (e.g. Apple Silicon → x86_6
 docker buildx create --use --name multiarch 2>/dev/null || docker buildx use multiarch
 
 docker buildx build --platform linux/amd64 \
-  -t $REGISTRY/bank-creditor-mcp:0.1.0 \
+  -t $REGISTRY/mcp:$TAG \
   -f services/mcp/Dockerfile --push .
 
 docker buildx build --platform linux/amd64 \
-  -t $REGISTRY/bank-creditor-agent:0.1.0 \
+  -t $REGISTRY/agent:$TAG \
   --push services/agent-langgraph
 ```
 
@@ -89,11 +90,11 @@ helm install postgres deploy/postgres -n $NS
 kubectl -n $NS rollout status statefulset/postgres
 
 helm install mcp deploy/mcp -n $NS \
-  --set image.repository=$REGISTRY/bank-creditor-mcp \
+  --set image.repository=$REGISTRY/mcp --set image.tag=$TAG \
   --set service.azureDnsLabel=<unique-label>   # required on AKS to avoid colliding with the demo's default label
 
 helm install agent deploy/agent -n $NS \
-  --set image.repository=$REGISTRY/bank-creditor-agent
+  --set image.repository=$REGISTRY/agent --set image.tag=$TAG
 
 kubectl -n $NS rollout status deployment/mcp
 kubectl -n $NS rollout status deployment/agent
@@ -118,6 +119,36 @@ echo "http://$MCP_IP/"
 
 If you set `service.azureDnsLabel`, the URL is `http://<label>.<region>.cloudapp.azure.com/` (no port — Service is on 80 by default).
 
+### 7. Optional: LangSmith tracing
+
+The LangGraph agent can send its traces to LangSmith, so you can show the same run in the LangSmith UI next to Catalyst. Each workflow is one `LangGraph` trace, with a child run per graph node (`agent`, `tools`) and a `credit_next` tool run tagged with the pod that ran it.
+
+```bash
+kubectl -n $NS create secret generic langsmith-api-key \
+  --from-literal=LANGSMITH_API_KEY=<your LangSmith API key>
+
+helm upgrade agent deploy/agent -n $NS --reset-then-reuse-values \
+  --set langsmith.enabled=true \
+  --set langsmith.project=bank-creditor
+# EU LangSmith orgs also need: --set langsmith.endpoint=https://eu.api.smith.langchain.com
+# A service key (lsv2_sk_) also needs: --set langsmith.workspaceId=<workspace ID>
+```
+
+A service key is scoped to the whole LangSmith organization, so without the workspace ID every trace upload gets a `403 Forbidden`.
+
+Use `--reset-then-reuse-values` (Helm 3.14+), not `--reuse-values`. A release installed before this chart had a `langsmith` block has none of its defaults stored, so `--reuse-values` leaves the secret name empty and the upgrade fails with `secretKeyRef.name: Invalid value: ""`.
+
+After the first run the project exists in LangSmith. Copy its URL and give it to the MCP chart, which adds an **Open in LangSmith** button to the UI top bar:
+
+```bash
+helm upgrade mcp deploy/mcp -n $NS --reset-then-reuse-values \
+  --set langsmithUrl=<LangSmith project URL>
+```
+
+The plain LangGraph comparison (`deploy/agent-plain`, no Catalyst) has the same `langsmith` block and traces to its own project, `bank-creditor-plain`. Create the same secret in its namespace, set `langsmith.enabled=true` on that release, and set `langsmithUrl` on that namespace's MCP release.
+
+To turn tracing off again: `helm upgrade agent deploy/agent -n $NS --reset-then-reuse-values --set langsmith.enabled=false`.
+
 > If the LB IP isn't reachable from your laptop, see the AKS [backend-pool gotcha](./TROUBLESHOOTING.md#public-lb-ip-exists-but-external-traffic-times-out). `kubectl -n $NS port-forward svc/mcp 8080:80` is the reliable fallback.
 
 ### 7. Verify the invariant
@@ -135,13 +166,14 @@ kubectl -n $NS exec postgres-0 -- psql -U bankadmin -d bankdemo -c \
 ### Updating after code changes
 
 ```bash
+export TAG=0.2.1                     # next version; update the charts' image.tag to match
 docker buildx build --platform linux/amd64 \
-  -t $REGISTRY/bank-creditor-mcp:0.1.0 \
+  -t $REGISTRY/mcp:$TAG \
   -f services/mcp/Dockerfile --push .
-kubectl -n $NS rollout restart deployment/mcp
+helm upgrade mcp deploy/mcp -n $NS --reset-then-reuse-values --set image.tag=$TAG
 ```
 
-(Agent: same pattern with `services/agent-langgraph` build context, restart `deployment/agent`.)
+(Agent: same pattern with the `services/agent-langgraph` build context, pushed as `$REGISTRY/agent`, then `helm upgrade agent deploy/agent`. The plain variant is `services/agent-plain` → `$REGISTRY/agent-plain`.)
 
 ### Tear down
 

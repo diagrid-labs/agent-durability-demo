@@ -38,7 +38,13 @@ def _schedule(instance_id: str, customer_id: int) -> None:
     }
     task = asyncio.create_task(
         GRAPH.ainvoke(
-            initial_state, config={"configurable": {"thread_id": instance_id}}
+            initial_state,
+            config={
+                "configurable": {"thread_id": instance_id},
+                # Tags every LangSmith run with the pod, so a pod kill shows
+                # exactly which accounts' traces it took down.
+                "metadata": {"pod": os.environ.get("HOSTNAME", "")},
+            },
         )
     )
     _tasks[instance_id] = task

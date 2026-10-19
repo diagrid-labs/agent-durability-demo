@@ -67,6 +67,23 @@ spec:
                   name: {{ .Values.agent.llm.apiKeySecret }}
                   key: OPENAI_API_KEY
             {{- end }}
+            {{- if (.Values.langsmith).enabled }}
+            - name: LANGSMITH_TRACING
+              value: "true"
+            - name: LANGSMITH_PROJECT
+              value: {{ .Values.langsmith.project | quote }}
+            - name: LANGSMITH_ENDPOINT
+              value: {{ .Values.langsmith.endpoint | quote }}
+            {{- with .Values.langsmith.workspaceId }}
+            - name: LANGSMITH_WORKSPACE_ID
+              value: {{ . | quote }}
+            {{- end }}
+            - name: LANGSMITH_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.langsmith.apiKeySecret }}
+                  key: {{ .Values.langsmith.apiKeySecretKey }}
+            {{- end }}
             {{- /* `(.Values.catalyst).enabled` is nil-safe — won't blow up
                   when `helm upgrade --reuse-values` carries forward an
                   older release whose stored values predate the catalyst

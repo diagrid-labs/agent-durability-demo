@@ -1,6 +1,6 @@
 image:
-  repository: alicejgibbons/bank-creditor-mcp
-  tag: "0.1.0"
+  repository: public.ecr.aws/d3f9w4q8/bank-creditor-demo/mcp
+  tag: "0.2.0"
   # Always-pull so a fresh push on the same tag is picked up without a bump.
   pullPolicy: Always
 
@@ -33,6 +33,10 @@ logLevel: INFO
 
 # Pill next to the UI title so deployments are distinguishable on stage.
 deploymentLabel: "Diagrid Catalyst"
+
+# LangSmith project page for the agent's traces. When set, the UI top bar
+# shows an "Open in LangSmith" button. Copy it from the project in LangSmith.
+langsmithUrl: ""
 
 resources:
   requests:

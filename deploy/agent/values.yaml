@@ -1,6 +1,6 @@
 image:
-  repository: alicejgibbons/bank-creditor-agent
-  tag: "0.1.0"
+  repository: public.ecr.aws/d3f9w4q8/bank-creditor-demo/agent
+  tag: "0.2.0"
   # Always-pull so a fresh push on the same tag is picked up without a bump.
   pullPolicy: Always
 
@@ -38,6 +38,20 @@ agent:
     model: gpt-4o-mini
     # Secret with key OPENAI_API_KEY. Only required when mode=real.
     apiKeySecret: ""
+
+# LangSmith tracing. diagrid.agent.langgraph reads LANGSMITH_* and sends one
+# trace per workflow, with a child run per graph node. apiKeySecret must exist
+# in the namespace before install (see docs/DEPLOYMENT.md, LangSmith section).
+langsmith:
+  enabled: false
+  project: bank-creditor
+  # EU orgs use https://eu.api.smith.langchain.com.
+  endpoint: https://api.smith.langchain.com
+  # Required with an org-scoped service key (lsv2_sk_); copy it from the
+  # workspace's settings page. Leave empty for a personal key (lsv2_pt_).
+  workspaceId: ""
+  apiKeySecret: langsmith-api-key
+  apiKeySecretKey: LANGSMITH_API_KEY
 
 resources:
   requests:

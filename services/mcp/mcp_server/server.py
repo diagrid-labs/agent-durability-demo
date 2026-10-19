@@ -485,7 +485,10 @@ def build_app() -> FastAPI:
     @app.get("/config")
     async def config() -> dict[str, Any]:
         # Lets the UI label which deployment it's talking to, one UI build for all.
-        return {"label": os.environ.get("DEPLOYMENT_LABEL", "Diagrid Catalyst")}
+        return {
+            "label": os.environ.get("DEPLOYMENT_LABEL", "Diagrid Catalyst"),
+            "langsmithUrl": os.environ.get("LANGSMITH_URL") or None,
+        }
 
     # Simulated drops become a 5xx so the workflow sees a step failure → retry.
     @app.exception_handler(DroppedCallError)
