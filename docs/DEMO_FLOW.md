@@ -2,7 +2,7 @@
 
 Ten accounts start at $100. One agent per account credits $1 at a time until the account reaches $200. You run the same LangGraph agent twice, once plain and once on Catalyst, and kill a pod mid-run in each.
 
-The LangSmith steps need tracing on ([DEPLOYMENT.md](./DEPLOYMENT.md) step 7). Sign in to LangSmith first with the shared demo login; Diagrid staff can find it on the Customer Sales Demos page in Notion.
+The LangSmith steps need tracing on ([DEPLOYMENT.md](./DEPLOYMENT.md) step 7). Sign in to LangSmith first with the 1Password item **LangSmith** in the **Diagrid Company Wide** vault (`hi@diagrid.io`).
 
 ## 1. Plain LangGraph
 
@@ -31,5 +31,5 @@ In the `resiliency-demo-langgraph` project:
 - **The run finished before you killed a pod.** Click Reset and Start again.
 - **A chaos button is greyed out.** No agent is running on a pod yet. Wait a few seconds.
 - **The UI counters look wrong.** The MCP server was restarted and lost its run state. Click Reset.
-- **LangSmith asks you to sign in.** Use the shared demo login. Only members of the LangSmith workspace can open the traces.
+- **LangSmith asks you to sign in.** Use the 1Password item **LangSmith** in the **Diagrid Company Wide** vault, then click the button again.
 - **A trace's top-level run shows as finished straight away.** That's a known quirk of how runs are started. Look at the steps inside it, not its duration.
