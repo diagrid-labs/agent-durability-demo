@@ -1,8 +1,8 @@
-# Bank Creditor on Catalyst — Local Mode
+# Bank Creditor on Diagrid — Local Mode
 
-Run the Bank Creditor demo (a LangGraph agent, durably executed via `diagrid.agent.langgraph`) on your laptop with the agent's Dapr APIs proxied through **Diagrid Catalyst**. Workflow runtime, state store, and placement run in Catalyst; the agent process, MCP server, and bank Postgres run locally.
+Run the Bank Creditor demo (a LangGraph agent, durably executed via `diagrid.agent.langgraph`) on your laptop with the agent's Dapr APIs proxied through **Diagrid**. Workflow runtime, state store, and placement run in Diagrid; the agent process, MCP server, and bank Postgres run locally.
 
-> For a k8s deploy that uses Catalyst Self-Hosted (no local `diagrid dev run`), see [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md) — that's also the canonical walkthrough for the `diagrid mcpserver` commands referenced below, since the agent's tool calls now go through Catalyst's MCP proxy rather than a direct connection.
+> For a k8s deploy that uses Enterprise Server (no local `diagrid dev run`), see [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md) — that's also the canonical walkthrough for the `diagrid mcpserver` commands referenced below, since the agent's tool calls now go through Diagrid's MCP proxy rather than a direct connection.
 
 ## Architecture
 
@@ -32,10 +32,10 @@ Run the Bank Creditor demo (a LangGraph agent, durably executed via `diagrid.age
 
 - Docker (or Podman) with `docker compose`
 - Python ≥ 3.11 and [`uv`](https://docs.astral.sh/uv/)
-- [Diagrid CLI](https://docs.diagrid.io/catalyst/references/cli-reference/intro)
-- A Diagrid Catalyst account: <https://catalyst.diagrid.io>
+- [Diagrid CLI](https://docs.diagrid.io/references/diagrid/diagrid-cli-intro/)
+- A Diagrid account: <https://catalyst.diagrid.io>
 
-## 1. Provision Catalyst resources
+## 1. Provision Diagrid resources
 
 This demo needs both managed workflow **and** agent infrastructure at project-create time — they cannot be enabled on an existing project. `--enable-agent-infrastructure` provisions the `agent-memory` state store, but the agent doesn't read it directly — LangGraph durability comes entirely from Dapr Workflow activity persistence. This hasn't been re-verified against a project created with `--enable-managed-workflow` alone — keep passing both flags until that's confirmed.
 
@@ -78,9 +78,9 @@ docker compose -f local/compose.yaml ps
 curl -s http://localhost:9000/healthz   # → {"status":"ok"}
 ```
 
-### Register the MCP server with Catalyst
+### Register the MCP server with Diagrid
 
-The agent's tool calls (`get_balance`, `credit_account`, `get_next_task`, `report_done`) go through Catalyst's managed MCP proxy — Catalyst has to be able to reach the MCP server's URL itself, not just your laptop.
+The agent's tool calls (`get_balance`, `credit_account`, `get_next_task`, `report_done`) go through Diagrid's managed MCP proxy — Diagrid has to be able to reach the MCP server's URL itself, not just your laptop.
 
 ```bash
 diagrid mcpserver create bank-postgres-mcp \
@@ -95,7 +95,7 @@ diagrid mcpserver access grant bank-postgres-mcp \
   --wait
 ```
 
-**Known gap, not yet verified**: with Catalyst Cloud (this section's `my-project` project), `localhost:9000` is only reachable from *this laptop* — `diagrid dev run`'s tunnel exposes the agent's port outward, but doesn't expose the MCP server's port inward-to-Catalyst. If registration or tool calls fail with a connect error, you likely need to tunnel the MCP server too (e.g. `ngrok http 9000` and register that URL instead), or point this registration at an already-reachable MCP endpoint (like the one from [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md), if you have one). This was validated end-to-end for the Self-Hosted / in-cluster case, not for Catalyst Cloud + a laptop-only MCP server.
+**Known gap, not yet verified**: with Diagrid Cloud (this section's `my-project` project), `localhost:9000` is only reachable from *this laptop* — `diagrid dev run`'s tunnel exposes the agent's port outward, but doesn't expose the MCP server's port inward-to-Catalyst. If registration or tool calls fail with a connect error, you likely need to tunnel the MCP server too (e.g. `ngrok http 9000` and register that URL instead), or point this registration at an already-reachable MCP endpoint (like the one from [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md), if you have one). This was validated end-to-end for the Self-Hosted / in-cluster case, not for Diagrid Cloud + a laptop-only MCP server.
 
 ## 3. Install agent dependencies
 
@@ -107,7 +107,7 @@ uv sync
 cd -
 ```
 
-## 4. Run the agent through Catalyst
+## 4. Run the agent through Diagrid
 
 From the repo root:
 
@@ -120,8 +120,8 @@ The `--skip-*` flags prevent `dev run` from auto-creating duplicate default comp
 
 This will:
 1. Authenticate against your `my-project` project.
-2. Open a dev tunnel from Catalyst back to `localhost:8000`.
-3. Spawn `uvicorn agent_worker.main:app` and a local daprd that proxies all Dapr API calls to Catalyst.
+2. Open a dev tunnel from Diagrid back to `localhost:8000`.
+3. Spawn `uvicorn agent_worker.main:app` and a local daprd that proxies all Dapr API calls to Diagrid.
 
 You should see `runner started (stub=True)` once the FastAPI app finishes its `/v1.0/healthz/outbound` wait — preceded by `Registered node: agent` / `Registered node: tools` and `Registering workflow 'dapr.langgraph.Banker.workflow' with runtime`.
 
@@ -146,7 +146,7 @@ docker exec -it $(docker compose -f local/compose.yaml ps -q postgres) \
   "SELECT customer_id, count(*), sum(amount) FROM transactions GROUP BY 1 ORDER BY 1;"
 ```
 
-In the Catalyst console (<https://catalyst.diagrid.io>), the `customer-7` workflow appears under the **Workflows** tab for `agent-worker`, with each activity invocation visible in the trace.
+In the Diagrid Console (<https://catalyst.diagrid.io>), the `customer-7` workflow appears under the **Workflows** tab for `agent-worker`, with each activity invocation visible in the trace.
 
 ## 6. Tear down
 
@@ -155,7 +155,7 @@ diagrid dev stop -f dapr.yaml
 docker compose -f local/compose.yaml down -v
 ```
 
-To delete the Catalyst project entirely:
+To delete the Diagrid project entirely:
 
 ```bash
 diagrid project delete my-project

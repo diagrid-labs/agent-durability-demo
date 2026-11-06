@@ -30,7 +30,7 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- /* Bypass AKS hairpin NAT when Catalyst gateway is in the same cluster. */}}
+      {{- /* Bypass AKS hairpin NAT when Diagrid gateway is in the same cluster. */}}
       {{- with (.Values.catalyst).hostAliases }}
       hostAliases:
         {{- toYaml . | nindent 8 }}
@@ -89,8 +89,8 @@ spec:
                   older release whose stored values predate the catalyst
                   block. Equivalent to `.Values.catalyst.enabled` otherwise. */}}
             {{- if (.Values.catalyst).enabled }}
-            # Catalyst Cloud mode: no sidecar, the Dapr SDK reads these to
-            # talk to the Catalyst project endpoints directly.
+            # Diagrid Cloud mode: no sidecar, the Dapr SDK reads these to
+            # talk to the Diagrid project endpoints directly.
             - name: DAPR_HTTP_ENDPOINT
               value: {{ .Values.catalyst.httpEndpoint | quote }}
             - name: DAPR_GRPC_ENDPOINT

@@ -106,7 +106,7 @@ async def _drain_tx_queue() -> None:
 
 
 class _MCPTrailingSlashMiddleware:
-    """Catalyst's proxy strips the trailing slash from tool-call requests;
+    """Diagrid's proxy strips the trailing slash from tool-call requests;
     bare `/mcp` then falls through to the `/` StaticFiles catch-all (405
     on POST) instead of matching the `/mcp` Mount. Normalize it here."""
 
@@ -486,7 +486,7 @@ def build_app() -> FastAPI:
     async def config() -> dict[str, Any]:
         # Lets the UI label which deployment it's talking to, one UI build for all.
         return {
-            "label": os.environ.get("DEPLOYMENT_LABEL", "Diagrid Catalyst"),
+            "label": os.environ.get("DEPLOYMENT_LABEL", "Diagrid"),
             "langsmithUrl": os.environ.get("LANGSMITH_URL") or None,
         }
 

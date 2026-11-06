@@ -11,7 +11,7 @@ durable-task engine already replays a dead host's instances on its own.
 
 `terminate` is still needed for `stop()`/`start()` cleanup — without it, "Stop
 run" only cancels this module's polling loop and the real instances keep
-crediting. But `terminate_workflow()` alone is unreliable: Catalyst marks an
+crediting. But `terminate_workflow()` alone is unreliable: Diagrid marks an
 instance `terminated` immediately while the underlying orchestration keeps
 crediting for tens of seconds after. So `stop()` also flips
 `Orchestrator.stopped` — every instance's next `get_next_task` gets
@@ -58,7 +58,7 @@ class Replenisher:
         self._spawn_count: int = 0
         self._instance_ids: list[str] = []
         self._last_snap: dict[str, Any] = {}
-        # Stay under Catalyst's per-app-id RPS limit.
+        # Stay under Diagrid's per-app-id RPS limit.
         self._schedule_throttle_ms = max(
             0, int(os.environ.get("SCHEDULE_THROTTLE_MS", "50"))
         )

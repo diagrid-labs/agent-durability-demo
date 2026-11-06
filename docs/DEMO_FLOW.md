@@ -1,18 +1,18 @@
 # Bank Creditor demo run guide
 
-Ten accounts start at $100. One agent per account credits $1 at a time until the account reaches $200. You run the same LangGraph agent twice, once plain and once on Catalyst, and kill a pod mid-run in each.
+Ten accounts start at $100. One agent per account credits $1 at a time until the account reaches $200. You run the same LangGraph agent twice, once plain and once on Diagrid, and kill a pod mid-run in each.
 
 ## Where everything is
 
 | What | Link | Sign in |
 |---|---|---|
 | Plain LangGraph UI | http://demo-prod-catalyst-plain.northeurope.cloudapp.azure.com/ | No login |
-| LangGraph on Catalyst UI | http://demo-prod-catalyst-agents.northeurope.cloudapp.azure.com/ | No login |
-| Dapr Agents on Catalyst UI | http://demo-prod-catalyst-dapr-agents.northeurope.cloudapp.azure.com/ | No login |
+| LangGraph on Diagrid Console | http://demo-prod-catalyst-agents.northeurope.cloudapp.azure.com/ | No login |
+| Dapr Agents on Diagrid Console | http://demo-prod-catalyst-dapr-agents.northeurope.cloudapp.azure.com/ | No login |
 | LangSmith | https://smith.langchain.com | 1Password item **LangSmith**, **Diagrid Company Wide** vault (`hi@diagrid.io`) |
-| LangSmith project, Catalyst | [bank-creditor](https://smith.langchain.com/o/ee448549-9340-4d81-a47d-1430acf42469/projects/p/f6ab8b2a-0814-49e4-8a9a-ec1bcaeb070a) | Same LangSmith login |
+| LangSmith project, Diagrid | [bank-creditor](https://smith.langchain.com/o/ee448549-9340-4d81-a47d-1430acf42469/projects/p/f6ab8b2a-0814-49e4-8a9a-ec1bcaeb070a) | Same LangSmith login |
 | LangSmith project, plain | [bank-creditor-plain](https://smith.langchain.com/o/ee448549-9340-4d81-a47d-1430acf42469/projects/p/394ac961-ebd4-48fb-9d18-c20bdb664e51) | Same LangSmith login |
-| Catalyst console | https://catalyst.diagrid.io | Your Diagrid account, org **Demo Production Catalyst**, project `resiliency-demo-langgraph` |
+| Diagrid Console | https://catalyst.diagrid.io | Your Diagrid account, org **Demo Production Diagrid**, project `resiliency-demo-langgraph` |
 
 Each demo UI's **Open in LangSmith ↗** button opens its LangSmith project. Sign in to LangSmith first, or the button lands on the login page.
 
@@ -23,15 +23,15 @@ Each demo UI's **Open in LangSmith ↗** button opens its LangSmith project. Sig
 3. The accounts that were on that pod stop and stay below $200.
 4. Click **Open in LangSmith ↗** and open a trace for a stopped account. It ends at the kill.
 
-## 2. LangGraph on Catalyst
+## 2. LangGraph on Diagrid
 
-1. In the Catalyst UI, click **↺ Reset**, then **▶ Start run**.
+1. In the Diagrid Console, click **↺ Reset**, then **▶ Start run**.
 2. While balances are climbing, click **Pod failure**. The accounts on that pod pause for a few seconds, then carry on.
 3. Optionally, try **AZ failure**, **MCP Latency: 10s** and **MCP tool call failure**. Each one slows the run down; none of them loses a credit.
 4. Click **Open in LangSmith ↗** and open a trace. Every `credit_next` step is tagged with the pod that ran it, and after the kill the steps carry on from the surviving pod.
 5. Let the run finish: every account at $200, 1,000 transactions, 0 lost. A run takes about 3 minutes.
 
-## 3. Catalyst console
+## 3. Diagrid Console
 
 In the `resiliency-demo-langgraph` project:
 

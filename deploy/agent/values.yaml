@@ -12,11 +12,11 @@ service:
   port: 8000
 
 mcp:
-  # Catalyst MCPServer resource fronting the Postgres MCP server (registered
+  # Diagrid MCPServer resource fronting the Postgres MCP server (registered
   # via `diagrid mcpserver create`). Requires an access grant for this app-id.
   serverName: bank-postgres-mcp
 
-# In Catalyst mode the state store is provisioned via `diagrid kv create`
+# In Diagrid mode the state store is provisioned via `diagrid kv create`
 # instead, so create:false here avoids an in-cluster CRD conflict.
 # LangGraph durability comes from Dapr Workflow activity persistence, not this.
 stateStore:
@@ -75,20 +75,20 @@ topologySpread:
   whenUnsatisfiable: DoNotSchedule
 
 dapr:
-  # False under Catalyst — pods get no daprd sidecar; the SDK talks to
-  # Catalyst directly instead.
+  # False under Diagrid — pods get no daprd sidecar; the SDK talks to
+  # Diagrid directly instead.
   enabled: true
   appId: bank-agent-creditor
   appPort: 8000
   appProtocol: http
   logLevel: info
 
-# Catalyst connection. apiTokenSecret must exist in the namespace before install.
+# Diagrid connection. apiTokenSecret must exist in the namespace before install.
 catalyst:
   enabled: false
   httpEndpoint: ""
   grpcEndpoint: ""
   apiTokenSecret: catalyst-agent-worker
   apiTokenSecretKey: DAPR_API_TOKEN
-  # Bypasses AKS hairpin NAT for same-cluster Catalyst Self-Hosted.
+  # Bypasses AKS hairpin NAT for same-cluster Enterprise Server.
   hostAliases: []

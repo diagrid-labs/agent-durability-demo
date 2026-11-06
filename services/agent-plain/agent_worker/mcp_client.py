@@ -5,7 +5,7 @@ from typing import Any
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
-# No Catalyst here — calls the MCP server's Service directly, same client
+# No Diagrid here — calls the MCP server's Service directly, same client
 # as the Dapr-backed agent minus the proxy prefix/token.
 MCP_URL = os.environ.get("MCP_URL", "http://mcp:80/mcp/")
 

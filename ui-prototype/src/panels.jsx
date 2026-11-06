@@ -86,7 +86,7 @@ function ChaosPanel({ feed, state }) {
       <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8, overflow: 'auto', minHeight: 0 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
           <button className="btn sm" onClick={() => feed.control.killRandom()}
-                  title="Pod dies mid-work (OOM, eviction, crash). Catalyst re-dispatches to a healthy worker."
+                  title="Pod dies mid-work (OOM, eviction, crash). Diagrid re-dispatches to a healthy worker."
                   disabled={!state.chaos.victim}
                   style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {state.chaos.victim

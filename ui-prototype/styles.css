@@ -1,4 +1,4 @@
-/* Bank Creditor Demo (Simple) — Catalyst-docs light mode */
+/* Bank Creditor Demo (Simple) — Diagrid-docs light mode */
 :root {
   /* Surfaces */
   --bg: #ffffff;
@@ -83,7 +83,7 @@ html, body {
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 
-/* Buttons — Catalyst-docs style */
+/* Buttons — Diagrid-docs style */
 .btn {
   font-family: var(--sans);
   font-size: 13px;

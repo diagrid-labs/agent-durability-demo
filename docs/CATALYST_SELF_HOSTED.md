@@ -1,14 +1,14 @@
-# Catalyst Self-Hosted bring-up
+# Enterprise Server bring-up
 
-Same agent + MCP code as the upstream-Dapr path, but the Dapr control plane (workflow engine, state store, pubsub) runs **inside your AKS cluster** under a Diagrid Catalyst Self-Hosted region. Pods don't get a `daprd` sidecar — the Dapr SDK reads `DAPR_HTTP_ENDPOINT` / `DAPR_GRPC_ENDPOINT` / `DAPR_API_TOKEN` from env and talks to the in-cluster Catalyst gateway directly.
+Same agent + MCP code as the upstream-Dapr path, but the Dapr control plane (workflow engine, state store, pubsub) runs **inside your AKS cluster** under a Diagrid Self-Hosted region. Pods don't get a `daprd` sidecar — the Dapr SDK reads `DAPR_HTTP_ENDPOINT` / `DAPR_GRPC_ENDPOINT` / `DAPR_API_TOKEN` from env and talks to the in-cluster Diagrid gateway directly.
 
 Use this path when you want:
-- Hosted-Dapr semantics + Catalyst Console + workflow visibility
-- No per-app-id RPS limits (unlike Cloud Catalyst)
+- Hosted-Dapr semantics + Diagrid Console + workflow visibility
+- No per-app-id RPS limits (unlike Cloud Diagrid)
 - Everything on a single AKS cluster
 
 > **This walkthrough is namespace/project-agnostic by design.** The cluster also runs a
-> non-Catalyst comparison (`bank-creditor-plain`, no Dapr at all — see its own Helm chart at
+> non-Diagrid comparison (`bank-creditor-plain`, no Dapr at all — see its own Helm chart at
 > `deploy/agent-plain/`), built from this same recipe with a different namespace/project name.
 > A future clone just needs a new namespace name, a new project name in step 4, and the values
 > overrides in steps 4/6/7 pointed at that namespace — no chart or code changes required.
@@ -64,7 +64,7 @@ kubectl get pods -n shared-postgresql
 
 ## 3. Resize the shared-postgresql + Kafka PVCs immediately
 
-The Catalyst chart defaults all storage PVCs to 1Gi. Bank Creditor workflows fill that in well under a day. **Do this before workloads start writing:**
+The Diagrid chart defaults all storage PVCs to 1Gi. Bank Creditor workflows fill that in well under a day. **Do this before workloads start writing:**
 
 ```bash
 kubectl -n shared-postgresql patch pvc data-shared-postgresql-0 \
@@ -97,9 +97,9 @@ diagrid agent create bank-agent-creditor --wait
 diagrid agent list   # should show ready
 ```
 
-Use `diagrid agent create`, not `diagrid appid create` — `Agent` is Catalyst's purpose-built resource type for AI agents (LangGraph, CrewAI, etc.), matching the [official quickstart](https://docs.diagrid.io/getting-started/quickstarts/ai-agents/?agentframework=langgraph). It provisions a same-named, fully-functional `AppIdentity` under the hood (still queryable via `diagrid appid get bank-agent-creditor`, annotated `cra.diagrid.io/managed_by: .../Agent/bank-agent-creditor/<id>`) plus an `<name>-agentcfg-<hash>` config resource that the `diagrid.agent.langgraph` SDK's `AgentRegistryMixin` writes LangGraph node/framework metadata into at runtime (`diagrid/agent/core/metadata/metadata.py`'s `AgentRegistryAdapter`) — that's what makes the App Graph show rich per-node detail instead of a generic app box. That metadata self-registration is real, but it still requires the underlying identity (and its Dapr API token) to already exist and be authenticated — `diagrid agent create` is the one-time step that provisions it; nothing creates the identity itself from inside the running pod.
+Use `diagrid agent create`, not `diagrid appid create` — `Agent` is Diagrid's purpose-built resource type for AI agents (LangGraph, CrewAI, etc.), matching the [official quickstart](https://docs.diagrid.io/getting-started/quickstarts/ai-agents/?agentframework=langgraph). It provisions a same-named, fully-functional `AppIdentity` under the hood (still queryable via `diagrid appid get bank-agent-creditor`, annotated `cra.diagrid.io/managed_by: .../Agent/bank-agent-creditor/<id>`) plus an `<name>-agentcfg-<hash>` config resource that the `diagrid.agent.langgraph` SDK's `AgentRegistryMixin` writes LangGraph node/framework metadata into at runtime (`diagrid/agent/core/metadata/metadata.py`'s `AgentRegistryAdapter`) — that's what makes the App Graph show rich per-node detail instead of a generic app box. That metadata self-registration is real, but it still requires the underlying identity (and its Dapr API token) to already exist and be authenticated — `diagrid agent create` is the one-time step that provisions it; nothing creates the identity itself from inside the running pod.
 
-Save the project ID (e.g. `prj1548627`) for the hostAliases step. There's no separate app-id for the MCP server anymore — registering it as a Catalyst `MCPServer` resource (step 8) provisions its own implicit app-id automatically.
+Save the project ID (e.g. `prj1548627`) for the hostAliases step. There's no separate app-id for the MCP server anymore — registering it as a Diagrid `MCPServer` resource (step 8) provisions its own implicit app-id automatically.
 
 ## 5. Create the K8s secret
 
@@ -118,7 +118,7 @@ kubectl -n bank-creditor create secret generic catalyst-agent-worker \
 
 ## 6. Write the agent Helm overlay
 
-The agent needs Catalyst endpoint URLs + a `hostAliases` mapping that points the Catalyst hostnames at the **in-cluster gateway ClusterIP** — required to work around AKS hairpin NAT (pods can't reach their own cluster's public LB IP).
+The agent needs Diagrid endpoint URLs + a `hostAliases` mapping that points the Diagrid hostnames at the **in-cluster gateway ClusterIP** — required to work around AKS hairpin NAT (pods can't reach their own cluster's public LB IP).
 
 Find the gateway ClusterIP + wildcard:
 
@@ -147,7 +147,7 @@ catalyst:
 EOF
 ```
 
-> **Why `hostAliases` is required on AKS:** AKS hairpin NAT blocks pods from reaching their own cluster's public LoadBalancer IP — connections to the gateway's external IP time out. The `hostAliases` block bypasses this by short-circuiting the Catalyst hostnames to the gateway's ClusterIP at the pod's `/etc/hosts` level.
+> **Why `hostAliases` is required on AKS:** AKS hairpin NAT blocks pods from reaching their own cluster's public LoadBalancer IP — connections to the gateway's external IP time out. The `hostAliases` block bypasses this by short-circuiting the Diagrid hostnames to the gateway's ClusterIP at the pod's `/etc/hosts` level.
 >
 > **On EKS / GKE / clusters without hairpin issues**, this is harmless redundancy but still recommended — it removes a dependency on cluster DNS reaching the public hostname.
 
@@ -170,7 +170,7 @@ helm -n bank-creditor upgrade --install agent ./deploy/agent \
   --wait
 ```
 
-The chart defaults to `stateStore.componentName: agent-memory` and `stateStore.create: false` — matches what Catalyst auto-provisions. No `--set stateStore.*` overrides needed. (Note: the agent code doesn't read this store directly — durability comes entirely from Dapr Workflow activity persistence. `stateStore.create` still controls whether `templates/component-state.yaml` renders the in-cluster CRD, so it stays load-bearing for a non-Catalyst chart deploy.)
+The chart defaults to `stateStore.componentName: agent-memory` and `stateStore.create: false` — matches what Diagrid auto-provisions. No `--set stateStore.*` overrides needed. (Note: the agent code doesn't read this store directly — durability comes entirely from Dapr Workflow activity persistence. `stateStore.create` still controls whether `templates/component-state.yaml` renders the in-cluster CRD, so it stays load-bearing for a non-Diagrid chart deploy.)
 
 ### Azure-specific bits in the charts
 
@@ -181,7 +181,7 @@ The MCP chart defaults to `service.type: LoadBalancer` with `service.azureDnsLab
 
 ## 8. Register the MCP server and grant access
 
-The agent reaches its Postgres-backed tools (`get_balance`, `credit_account`, `get_next_task`, `report_done`) through Catalyst's managed MCP proxy, not direct Dapr service invocation. Register the `mcp` Service's FastMCP endpoint as an `MCPServer` resource, then grant `bank-agent-creditor` access — new MCP servers deny every tool until granted:
+The agent reaches its Postgres-backed tools (`get_balance`, `credit_account`, `get_next_task`, `report_done`) through Diagrid's managed MCP proxy, not direct Dapr service invocation. Register the `mcp` Service's FastMCP endpoint as an `MCPServer` resource, then grant `bank-agent-creditor` access — new MCP servers deny every tool until granted:
 
 ```bash
 diagrid mcpserver create bank-postgres-mcp \
@@ -196,7 +196,7 @@ diagrid mcpserver access grant bank-postgres-mcp \
   --wait
 ```
 
-This must come **after** the `mcp` chart is installed (step 7) — Catalyst validates the upstream URL when registering. `bank-postgres-mcp` becomes its own implicit app-id automatically; you don't create one for it separately.
+This must come **after** the `mcp` chart is installed (step 7) — Diagrid validates the upstream URL when registering. `bank-postgres-mcp` becomes its own implicit app-id automatically; you don't create one for it separately.
 
 If the agent's tool calls come back `403 Forbidden`, the grant above didn't take — re-run `diagrid mcpserver access get bank-postgres-mcp --project resiliency-demo-langgraph` to confirm `bank-agent-creditor` is listed with `credit_next`.
 
@@ -238,7 +238,7 @@ diagrid region delete my-sh-region
 
 - **Workflow scheduled but errors with "state store not found"** — `--enable-agent-infrastructure` wasn't passed at project-create time. See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#failed-to-create-orchestration-instance-the-state-store-is-not-found--state-store--is-not-found).
 - **Agent logs show `Connection timed out` retrying the LB external IP** — `hostAliases` didn't take. Confirm with `kubectl -n bank-creditor get deploy agent -o yaml | grep -A4 hostAliases`.
-- **Tool calls fail with `upstream HTTP 405`** — Catalyst's MCP proxy relays the caller's request to the registered upstream URL with the trailing slash stripped, even though the URL was registered with one. FastMCP's own Mount only gives Starlette a partial match for the bare path, so it falls through to the `/` static-files catch-all, which rejects POST outright. Fixed server-side by `_MCPTrailingSlashMiddleware` in `services/mcp/mcp_server/server.py` — if you see this on a *different* MCP server, add an equivalent path-normalizing shim in front of it.
+- **Tool calls fail with `upstream HTTP 405`** — Diagrid's MCP proxy relays the caller's request to the registered upstream URL with the trailing slash stripped, even though the URL was registered with one. FastMCP's own Mount only gives Starlette a partial match for the bare path, so it falls through to the `/` static-files catch-all, which rejects POST outright. Fixed server-side by `_MCPTrailingSlashMiddleware` in `services/mcp/mcp_server/server.py` — if you see this on a *different* MCP server, add an equivalent path-normalizing shim in front of it.
 - **Tool calls fail with `403 Forbidden`** — no access grant yet, or it doesn't cover the tool being called. Run `diagrid mcpserver access grant` from step 8.
 - **`diagrid` CLI times out to LB IP from your laptop** — port-override.yaml in step 2 not applied. The chart defaults to 8080/8443, the CLI hardcodes 443.
 - **gRPC `UNIMPLEMENTED`** — agent endpoint is pointing at the per-app inbound hostname instead of `grpc-prj<id>.<wildcard>` (the project-scoped outbound).

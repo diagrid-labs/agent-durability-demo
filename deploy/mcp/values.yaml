@@ -32,7 +32,7 @@ agent:
 logLevel: INFO
 
 # Pill next to the UI title so deployments are distinguishable on stage.
-deploymentLabel: "Diagrid Catalyst"
+deploymentLabel: "Diagrid"
 
 # LangSmith project page for the agent's traces. When set, the UI top bar
 # shows an "Open in LangSmith" button. Copy it from the project in LangSmith.

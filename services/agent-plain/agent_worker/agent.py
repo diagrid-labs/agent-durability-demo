@@ -1,4 +1,4 @@
-"""Plain LangGraph graph for the Bank Creditor demo — no Dapr, no Catalyst.
+"""Plain LangGraph graph for the Bank Creditor demo — no Dapr, no Diagrid.
 Same shape as services/agent-langgraph's graph, but with nothing durable underneath."""
 
 import os
