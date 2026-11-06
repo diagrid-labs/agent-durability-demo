@@ -46,17 +46,17 @@ UI Start ─POST→ MCP /agent/spawn ─→ Replenisher.start
 
 ## Bring-up (canonical)
 
-Production (any K8s + Catalyst Self-Hosted): Helm charts in `deploy/`, see `docs/CATALYST_SELF_HOSTED.md`.
+Production (any K8s + Enterprise Server): Helm charts in `deploy/`, see `docs/CATALYST_SELF_HOSTED.md`.
 Local: `docker compose -f local/compose.yaml up -d --build` + `diagrid dev run --file dapr.yaml --project <p>` per `docs/CATALYST.md`.
 UI: `http://<host>/index.html` (or `localhost:9000` locally — same origin, no CORS).
 
 ## Critical gotchas (read before debugging)
 
-**`diagrid workflow terminate/pause/purge` are silent no-ops for these workflows.** Use `/agent/instances/{id}/terminate` and `/purge` in `main.py` instead — they call `runner.terminate_workflow()`/`purge_workflow()` directly against the durabletask runtime. For bulk cleanup, wipe the `agent-workflow` state store via the Catalyst Console or recreate the app-id.
+**`diagrid workflow terminate/pause/purge` are silent no-ops for these workflows.** Use `/agent/instances/{id}/terminate` and `/purge` in `main.py` instead — they call `runner.terminate_workflow()`/`purge_workflow()` directly against the durabletask runtime. For bulk cleanup, wipe the `agent-workflow` state store via the Diagrid Console or recreate the app-id.
 
-**Catalyst rate-limits per app-id.** Only 10 `/schedule-one` calls fire at run start, but the 10 running workflows still do continuous `GetState`/`PutState`. Watch for `RESOURCE_EXHAUSTED`/`UNAVAILABLE` errors; throttle via `SCHEDULE_THROTTLE_MS` on MCP (default 50ms).
+**Diagrid rate-limits per app-id.** Only 10 `/schedule-one` calls fire at run start, but the 10 running workflows still do continuous `GetState`/`PutState`. Watch for `RESOURCE_EXHAUSTED`/`UNAVAILABLE` errors; throttle via `SCHEDULE_THROTTLE_MS` on MCP (default 50ms).
 
-**The agent talks to MCP only through Catalyst's MCP proxy**, never the `mcp` Service directly (see `docs/CATALYST_SELF_HOSTED.md` step 8). A `403` almost always means the tool's access grant is missing or stale, not a network problem.
+**The agent talks to MCP only through Diagrid's MCP proxy**, never the `mcp` Service directly (see `docs/CATALYST_SELF_HOSTED.md` step 8). A `403` almost always means the tool's access grant is missing or stale, not a network problem.
 
 **Workflow name convention: `dapr.<framework>.<TitleCaseName>.workflow`** (e.g. `dapr.langgraph.Banker.workflow`). `main.py` never builds this string itself — `run_async(workflow_id=...)` resolves the registered workflow internally.
 
@@ -64,25 +64,25 @@ UI: `http://<host>/index.html` (or `localhost:9000` locally — same origin, no 
 
 **`DaprWorkflowGraphRunner(max_steps=...)` defaults to 100** — a cap on graph steps, not credits. Each credit costs 2 steps (decide, `credit_next`), so it's set to `max_steps=400`; rescale if `credits_per_customer` changes.
 
-**Don't use LangGraph's `MessagesState` for a long-running instance** — it grows every step and blows Catalyst's ~4MB gRPC payload ceiling. Use a fixed-size `TypedDict` (`BankerState`) whose fields get overwritten each step instead. Side effect: real-mode (`STUB_LLM=false`) isn't supported under this state shape, since there's no transcript for a real model to reason over.
+**Don't use LangGraph's `MessagesState` for a long-running instance** — it grows every step and blows Diagrid's ~4MB gRPC payload ceiling. Use a fixed-size `TypedDict` (`BankerState`) whose fields get overwritten each step instead. Side effect: real-mode (`STUB_LLM=false`) isn't supported under this state shape, since there's no transcript for a real model to reason over.
 
 **MCP tool surface is one call per credit (`credit_next`).** `server.py`'s `credit_next(requester, customer_id, pod)` claims the task, checks balance, credits if needed, and marks done, all in one call.
 
-**A pod killed mid-activity resumes on its own** — Catalyst redispatches the orphaned activity to a surviving worker. No sidecar-restart or other workaround needed; if a freeze is ever observed, treat it as a regression to report upstream rather than reintroducing one.
+**A pod killed mid-activity resumes on its own** — Diagrid redispatches the orphaned activity to a surviving worker. No sidecar-restart or other workaround needed; if a freeze is ever observed, treat it as a regression to report upstream rather than reintroducing one.
 
-**`DaprWorkflowGraphRunner` builds its own `WorkflowRuntime` with no concurrency knobs exposed**, and there's no `AGENT_STATE_STORE` env var — durability comes entirely from Dapr Workflow activity persistence. `stateStore.componentName` in `deploy/agent/values.yaml` still matters for non-Catalyst chart deploys (`stateStore.create: true`).
+**`DaprWorkflowGraphRunner` builds its own `WorkflowRuntime` with no concurrency knobs exposed**, and there's no `AGENT_STATE_STORE` env var — durability comes entirely from Dapr Workflow activity persistence. `stateStore.componentName` in `deploy/agent/values.yaml` still matters for non-Diagrid chart deploys (`stateStore.create: true`).
 
 **LangSmith tracing is env-only** — `diagrid.agent.langgraph` sends traces when `LANGSMITH_TRACING=true` (agent chart `langsmith.enabled`); the only tracing code in the agent is the `pod` metadata on the `credit_next` call. The root `LangGraph` trace shows as finished right after `/schedule-one`, because `_schedule` closes the `run_async` generator after the first event and the SDK closes the root trace in its `finally`; the SDK sets the real end time again when the workflow completes. Child runs keep arriving in between.
 
 **The replenisher lives on the MCP server, not the agent.** `Replenisher` in `services/mcp/mcp_server/replenisher.py` owns the loop and calls agent's `/schedule-one`.
 
-**State-store component name is `agent-memory`**, auto-provisioned by Catalyst `--enable-agent-infrastructure`. The agent chart defaults `stateStore.componentName` to this with `create: false`.
+**State-store component name is `agent-memory`**, auto-provisioned by Diagrid `--enable-agent-infrastructure`. The agent chart defaults `stateStore.componentName` to this with `create: false`.
 
-**Catalyst remote mode has no `daprd` sidecar.** The Dapr SDK reads `DAPR_HTTP_ENDPOINT`/`DAPR_GRPC_ENDPOINT`/`DAPR_API_TOKEN` directly from env; set `dapr.enabled=false` in Helm values.
+**Diagrid remote mode has no `daprd` sidecar.** The Dapr SDK reads `DAPR_HTTP_ENDPOINT`/`DAPR_GRPC_ENDPOINT`/`DAPR_API_TOKEN` directly from env; set `dapr.enabled=false` in Helm values.
 
-**Catalyst Self-Hosted endpoint hostnames are project-scoped, not app-scoped** — pattern `http-prj<id>.<region>` / `grpc-prj<id>.<region>`. Get the project id from `diagrid project get` and the region wildcard from `diagrid region get <region>` (`ingress.wildcardDomain`).
+**Enterprise Server endpoint hostnames are project-scoped, not app-scoped** — pattern `http-prj<id>.<region>` / `grpc-prj<id>.<region>`. Get the project id from `diagrid project get` and the region wildcard from `diagrid region get <region>` (`ingress.wildcardDomain`).
 
-**Catalyst Self-Hosted's gateway LB exposes 8080/8443, but the `diagrid` CLI hardcodes `:443`.** Override via Helm values (saved in `deploy/catalyst-selfhosted/port-override.yaml`):
+**Enterprise Server's gateway LB exposes 8080/8443, but the `diagrid` CLI hardcodes `:443`.** Override via Helm values (saved in `deploy/catalyst-selfhosted/port-override.yaml`):
 ```yaml
 gateway:
   envoy:
@@ -91,7 +91,7 @@ gateway:
       httpsPort: 443
 ```
 
-**AKS hairpin NAT blocks pod → own-cluster-LB traffic.** Fix: agent chart's `catalyst.hostAliases` maps Catalyst hostnames to the gateway-envoy ClusterIP so connections stay in-cluster.
+**AKS hairpin NAT blocks pod → own-cluster-LB traffic.** Fix: agent chart's `catalyst.hostAliases` maps Diagrid hostnames to the gateway-envoy ClusterIP so connections stay in-cluster.
 
 **`AGENT_HTTP_BASE` env var on MCP** sets where the replenisher POSTs `/schedule-one` — override via Helm for k8s (`http://agent.<ns>.svc.cluster.local:8000`); the code default is local-only.
 
@@ -105,11 +105,11 @@ gateway:
 | Per-agent / per-pod state in UI | `state.run`, `state.chaos.pods` in `ui-prototype/src/telemetry.jsx` |
 | MCP tool definitions | `@mcp.tool()` decorators in `services/mcp/mcp_server/server.py` |
 | Real pod-chaos endpoints | `/chaos/pods`, `/chaos/pod-kill`, `/chaos/az-kill` → `pod_chaos.py` |
-| Catalyst bring-up + provisioning | `docs/CATALYST_SELF_HOSTED.md`, `docs/CATALYST.md` |
+| Diagrid bring-up + provisioning | `docs/CATALYST_SELF_HOSTED.md`, `docs/CATALYST.md` |
 | Node topology (labels, zone spread) | `deploy/agent/values.yaml:topologySpread` |
 | Common operational failures + fixes | `docs/TROUBLESHOOTING.md` |
 | LangSmith tracing setup | `docs/DEPLOYMENT.md` step 7, `deploy/agent/values.yaml:langsmith` |
-| Testing Dapr Workflow behavior without Catalyst (debug-only) | `docs/LOCAL_DAPR.md` |
+| Testing Dapr Workflow behavior without Diagrid (debug-only) | `docs/LOCAL_DAPR.md` |
 
 ## Code style for this repo
 
@@ -120,4 +120,4 @@ gateway:
 
 ## Sister persisted memory
 
-Strategic context lives in auto-memory (`~/.claude/projects/-Users-martezkillens-src-agent-durability-demo/memory/`): demo constraints, framing rules ("credit" not "drain"), Catalyst port checklist, future-state roadmap. This file is for codebase orientation only.
+Strategic context lives in auto-memory (`~/.claude/projects/-Users-martezkillens-src-agent-durability-demo/memory/`): demo constraints, framing rules ("credit" not "drain"), Diagrid port checklist, future-state roadmap. This file is for codebase orientation only.

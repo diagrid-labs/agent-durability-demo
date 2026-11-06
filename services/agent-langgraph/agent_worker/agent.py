@@ -42,10 +42,10 @@ async def credit_next(requester: str, customer_id: int) -> dict[str, Any]:
     return result
 
 
-# Metadata-only stand-in for Catalyst's Agent UI — a StructuredTool isn't
+# Metadata-only stand-in for Diagrid's Agent UI — a StructuredTool isn't
 # callable(), which the mapper's tool scan requires, so it needs a plain function.
 def _credit_next_metadata_proxy(*_args, **_kwargs):
-    raise NotImplementedError("metadata-only stand-in for Catalyst's Agent UI — never invoked")
+    raise NotImplementedError("metadata-only stand-in for Diagrid's Agent UI — never invoked")
 
 
 _credit_next_metadata_proxy.name = credit_next.name

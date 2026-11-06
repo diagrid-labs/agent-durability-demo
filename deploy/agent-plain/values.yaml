@@ -15,7 +15,7 @@ service:
   port: 8000
 
 mcp:
-  # In-cluster MCP Service URL, called directly — no Dapr, no Catalyst proxy.
+  # In-cluster MCP Service URL, called directly — no Dapr, no Diagrid proxy.
   # Port 80 is the mcp chart's Service port (deploy/mcp/values.yaml's
   # service.port), NOT the container's port 8000 — the Service doesn't listen
   # on 8000 at all. Must include the trailing /mcp/ path (FastMCP's mount
@@ -25,7 +25,7 @@ mcp:
 logLevel: INFO
 
 # LangSmith tracing. Plain LangGraph traces natively when LANGSMITH_TRACING is
-# set. Its own project keeps these runs apart from the Catalyst variant's.
+# set. Its own project keeps these runs apart from the Diagrid variant's.
 # apiKeySecret must exist in this chart's namespace (docs/DEPLOYMENT.md step 7).
 langsmith:
   enabled: false

@@ -1,21 +1,21 @@
-# Running locally on plain Dapr (no Catalyst)
+# Running locally on plain Dapr (no Diagrid)
 
 **This is not a supported deployment path.** For actually running the demo, see
 [DEPLOYMENT.md](./DEPLOYMENT.md) (Kubernetes) or [CATALYST.md](./CATALYST.md) (local +
-Catalyst). This doc is a debugging/investigation recipe: a way to run the agent against a
-plain local Dapr install — no Catalyst project, no MCP proxy, no gateway — so you can test
-Dapr Workflow's own durability behavior in isolation from Catalyst's hosted backend.
+Diagrid). This doc is a debugging/investigation recipe: a way to run the agent against a
+plain local Dapr install — no Diagrid project, no MCP proxy, no gateway — so you can test
+Dapr Workflow's own durability behavior in isolation from Diagrid's hosted backend.
 
-Use this when you need to answer "is this a Catalyst-specific bug, or a general Dapr
+Use this when you need to answer "is this a Diagrid-specific bug, or a general Dapr
 Workflow limitation?" That's exactly what it was built for — see the "does NOT reproduce
 under plain local Dapr" note on the pod-kill-mid-activity gotcha in `CLAUDE.md`.
 
 ## Why a patch is required
 
-`services/agent-langgraph/agent_worker/mcp_client.py` hardcodes Catalyst's MCP proxy path
+`services/agent-langgraph/agent_worker/mcp_client.py` hardcodes Diagrid's MCP proxy path
 (`$DAPR_HTTP_ENDPOINT/v1.0/diagrid/mcp/$MCP_SERVER_NAME`), which doesn't exist outside
-Catalyst — there's no plain-Dapr fallback in the codebase (see `CLAUDE.md`'s gotcha on this;
-it's an intentional simplification, not an oversight). To run locally without Catalyst, you
+Diagrid — there's no plain-Dapr fallback in the codebase (see `CLAUDE.md`'s gotcha on this;
+it's an intentional simplification, not an oversight). To run locally without Diagrid, you
 need to temporarily bypass that proxy and call the MCP server directly. Don't leave this
 patch in place — it's for this investigation only.
 
@@ -138,13 +138,13 @@ git checkout -- services/agent-langgraph/agent_worker/mcp_client.py   # revert t
 Across 3 verified trials — kills as early as 2-7 of 100 credits in, survivor's `/healthz`
 actively polled throughout — the surviving process always picked up the orphaned activity
 and the workflow ran to completion. No freeze, ever. This is a strong signal that the
-pod-kill-mid-activity non-resume issue documented in `CLAUDE.md` is specific to Catalyst's
+pod-kill-mid-activity non-resume issue documented in `CLAUDE.md` is specific to Diagrid's
 hosted backend, not a general Dapr Workflow limitation.
 
 Caveat: local self-hosted Dapr's workflow engine runs on the classic actor-placement backend
 (`worker started with backend dapr.actors/v1` in the daprd log, backed by Redis) — a
-different implementation from whatever Catalyst's own hosted durabletask backend uses. So
-this narrows the issue to "Catalyst's backend specifically," not proof the exact same code
+different implementation from whatever Diagrid's own hosted durabletask backend uses. So
+this narrows the issue to "Diagrid's backend specifically," not proof the exact same code
 path is at fault.
 
 ## Unrelated thing you'll probably hit

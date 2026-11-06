@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Common failures hit while bringing the Bank Creditor demo up across the deploy paths (AKS + Catalyst Self-Hosted, local + Catalyst). Most are environmental rather than code bugs.
+Common failures hit while bringing the Bank Creditor demo up across the deploy paths (AKS + Enterprise Server, local + Diagrid). Most are environmental rather than code bugs.
 
 ## UI loads but customer balances never move
 
@@ -36,9 +36,9 @@ Fix (already applied in `services/agent-langgraph/agent_worker/agent.py`): regis
 
 ## `failed to create orchestration instance: the state store is not found` / `state store ... is not found`
 
-The workflow runtime needs a state store named whatever `AGENT_STATE_STORE` says. The chart's defaults are tuned for Catalyst Self-Hosted (`stateStore.componentName: agent-memory`, `stateStore.create: false`).
+The workflow runtime needs a state store named whatever `AGENT_STATE_STORE` says. The chart's defaults are tuned for Enterprise Server (`stateStore.componentName: agent-memory`, `stateStore.create: false`).
 
-**Catalyst (Self-Hosted or Local)** — the named component doesn't exist in the project. `agent-memory` is auto-provisioned by `--enable-agent-infrastructure` at project-create time and is the chart default. If it's missing, the project wasn't created with that flag; recreate the project:
+**Diagrid (Self-Hosted or Local)** — the named component doesn't exist in the project. `agent-memory` is auto-provisioned by `--enable-agent-infrastructure` at project-create time and is the chart default. If it's missing, the project wasn't created with that flag; recreate the project:
 
 ```bash
 diagrid project delete <name> --wait
@@ -52,7 +52,7 @@ If you've explicitly overridden `stateStore.componentName` to something else (e.
 diagrid component list --project <your-project>
 ```
 
-**Upstream Dapr (no Catalyst)** — flip the chart back to creating its own Postgres-backed component:
+**Upstream Dapr (no Diagrid)** — flip the chart back to creating its own Postgres-backed component:
 
 ```bash
 helm upgrade agent deploy/agent -n bank-creditor --reuse-values \
@@ -122,7 +122,7 @@ Either:
 - The template should use nil-safe access: `(.Values.foo).enabled` instead of `.Values.foo.enabled`. Already applied for the demo's `catalyst` and `topologySpread` blocks.
 - Or `helm upgrade --reset-values` and re-pass everything.
 
-## MCP tool calls failing through Catalyst's proxy
+## MCP tool calls failing through Diagrid's proxy
 
 The agent reaches the MCP server's one consolidated tool (`credit_next`) at `$DAPR_HTTP_ENDPOINT/v1.0/diagrid/mcp/<MCP_SERVER_NAME>`, not directly. Three likely causes:
 
@@ -134,7 +134,7 @@ The agent reaches the MCP server's one consolidated tool (`credit_next`) at `$DA
      --allow-tools credit_next --wait
    ```
 
-2. **`upstream HTTP 405`.** Catalyst's proxy relays the caller's actual request to the registered upstream URL with the trailing slash stripped (its own health ping keeps the slash). FastMCP's `/mcp` Mount only gives Starlette a partial match for the bare path, so it falls through to the `/` static-files catch-all, which rejects POST. Fixed by `_MCPTrailingSlashMiddleware` in `services/mcp/mcp_server/server.py` — confirm it's present and deployed (`kubectl -n bank-creditor logs deploy/mcp | grep 405` should show nothing new after a fresh rollout).
+2. **`upstream HTTP 405`.** Diagrid's proxy relays the caller's actual request to the registered upstream URL with the trailing slash stripped (its own health ping keeps the slash). FastMCP's `/mcp` Mount only gives Starlette a partial match for the bare path, so it falls through to the `/` static-files catch-all, which rejects POST. Fixed by `_MCPTrailingSlashMiddleware` in `services/mcp/mcp_server/server.py` — confirm it's present and deployed (`kubectl -n bank-creditor logs deploy/mcp | grep 405` should show nothing new after a fresh rollout).
 
 3. **`MCP_SERVER_NAME` mismatch.** The agent's env var must match the registered `MCPServer` resource's name exactly (`diagrid mcpserver list --project resiliency-demo-langgraph`). Check with:
    ```bash
@@ -159,8 +159,8 @@ kubectl -n bank-creditor rollout restart deployment/mcp
 
 ## Throughput notes by deploy mode
 
-- **Catalyst Self-Hosted** (data plane in your cluster): no per-app RPS limit, intra-cluster latency. The default `target_concurrency` of 100 works fine.
-- **Local Catalyst** (`diagrid dev run`): all traffic tunnels through the dev proxy, including MCP tool calls; expect slower throughput than Self-Hosted but the durability story is identical.
+- **Enterprise Server** (data plane in your cluster): no per-app RPS limit, intra-cluster latency. The default `target_concurrency` of 100 works fine.
+- **Local Diagrid** (`diagrid dev run`): all traffic tunnels through the dev proxy, including MCP tool calls; expect slower throughput than Self-Hosted but the durability story is identical.
 
 The durability story (the actual point of the demo) works at any throughput.
 

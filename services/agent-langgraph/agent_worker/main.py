@@ -41,7 +41,7 @@ async def wait_for_dapr() -> None:
 
 @contextlib.asynccontextmanager
 async def lifespan(app_: FastAPI):
-    # Catalyst mode has no local daprd to wait on — only poll in sidecar mode.
+    # Diagrid mode has no local daprd to wait on — only poll in sidecar mode.
     if not os.environ.get("DAPR_HTTP_ENDPOINT"):
         await wait_for_dapr()
     runner = build_runner()
@@ -72,7 +72,7 @@ class ScheduleOneBody(BaseModel):
 
 async def _schedule(instance_id: str, customer_id: int) -> None:
     """Schedule one graph run under `instance_id` and return as soon as
-    Catalyst confirms acceptance, without waiting for the graph to finish."""
+    Diagrid confirms acceptance, without waiting for the graph to finish."""
     runner = app.state.runner
     events = runner.run_async(
         input={

@@ -1,4 +1,4 @@
-Plain LangGraph agent worker deployed — no Dapr, no Catalyst.
+Plain LangGraph agent worker deployed — no Dapr, no Diagrid.
 
 In-cluster service:
   http://agent.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}

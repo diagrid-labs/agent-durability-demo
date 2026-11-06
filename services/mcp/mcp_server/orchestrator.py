@@ -135,7 +135,7 @@ class Orchestrator:
 
         After `set_stopped(True)`, every new (non-replay) request gets
         {done: true} — this is what actually stops crediting, independent of
-        whether Catalyst's terminate_workflow() takes effect (CLAUDE.md)."""
+        whether Diagrid's terminate_workflow() takes effect (CLAUDE.md)."""
         async with self._lock:
             if requester:
                 existing_tx = self._state.by_requester.get(requester)

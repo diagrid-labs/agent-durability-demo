@@ -28,7 +28,7 @@ function fmtClock(ms) {
   return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
 }
 
-/* ================ TopBar — Catalyst-docs style ================ */
+/* ================ TopBar — Diagrid-docs style ================ */
 function TopBar({ state, feed, onTogglePause }) {
   const run = state.run || {};
   // Labels which backend this page is talking to, one UI build for all.

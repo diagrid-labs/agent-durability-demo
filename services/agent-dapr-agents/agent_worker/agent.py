@@ -19,10 +19,10 @@ from dapr_agents.storage.daprstores.stateservice import StateStoreService
 from .mcp_client import call_tool
 from .stub_llm import StubLLM
 
-# Fixed name Catalyst's `--enable-agent-infrastructure` provisions. See CLAUDE.md.
+# Fixed name Diagrid's `--enable-agent-infrastructure` provisions. See CLAUDE.md.
 AGENT_MEMORY_STORE = "agent-memory"
 
-# Reuses an existing topic name to avoid Catalyst's topic-discovery race and
+# Reuses an existing topic name to avoid Diagrid's topic-discovery race and
 # quota; pub/sub itself is unused since everything runs through /schedule-one.
 AGENT_PUBSUB_TOPIC = "bank-creditor-1.topic"
 AGENT_BROADCAST_TOPIC = "agents.broadcast"

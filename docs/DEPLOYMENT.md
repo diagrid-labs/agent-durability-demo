@@ -1,10 +1,10 @@
 # Deployment
 
-Two ways to run the Bank Creditor demo: deploy to Kubernetes (production-shaped, any conformant cluster), or run the agent locally against a Catalyst project. The agent reaches its Postgres-backed tools (`get_balance`, `credit_account`, etc.) through Catalyst's managed MCP proxy — there's no non-Catalyst transport for this anymore, so both paths below require a Catalyst project (Self-Hosted or Cloud); pick based on where the *cluster* lives.
+Two ways to run the Bank Creditor demo: deploy to Kubernetes (production-shaped, any conformant cluster), or run the agent locally against a Diagrid project. The agent reaches its Postgres-backed tools (`get_balance`, `credit_account`, etc.) through Diagrid's managed MCP proxy — there's no non-Diagrid transport for this anymore, so both paths below require a Diagrid project (Self-Hosted or Cloud); pick based on where the *cluster* lives.
 
 - [**Deploying to Kubernetes**](#deploying-to-kubernetes) — production-shaped. Bring your own cluster (AKS, EKS, GKE, kind, k3s).
-  - [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md) — Diagrid Catalyst Self-Hosted in the same cluster (no daprd sidecar; SDK talks to in-cluster gateway), including the MCP server registration + access-grant steps.
-- [**Local deployment with Catalyst**](#local-deployment-with-catalyst) — docker compose for Postgres + MCP, agent runs locally with Diagrid Catalyst providing managed Dapr APIs and the MCP proxy.
+  - [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md) — Diagrid Self-Hosted in the same cluster (no daprd sidecar; SDK talks to in-cluster gateway), including the MCP server registration + access-grant steps.
+- [**Local deployment with Diagrid**](#local-deployment-with-diagrid) — docker compose for Postgres + MCP, agent runs locally with Diagrid providing managed Dapr APIs and the MCP proxy.
 
 ---
 
@@ -56,9 +56,9 @@ docker buildx build --platform linux/amd64 \
 
 (Drop `--platform linux/amd64` if your laptop already matches the cluster, or change it to `linux/arm64` for ARM clusters.)
 
-### 3. Install Catalyst and create app-ids
+### 3. Install Diagrid and create app-ids
 
-Follow [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md)'s project + app-id setup before continuing — this demo has no plain-Dapr fallback (`dapr init -k` alone isn't enough) since the agent's tool calls now go through Catalyst's MCP proxy. Come back here once `bank-agent-creditor` shows `ready` in `diagrid appid list`.
+Follow [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md)'s project + app-id setup before continuing — this demo has no plain-Dapr fallback (`dapr init -k` alone isn't enough) since the agent's tool calls now go through Diagrid's MCP proxy. Come back here once `bank-agent-creditor` shows `ready` in `diagrid appid list`.
 
 ### 4. Choose how the UI gets exposed
 
@@ -108,7 +108,7 @@ kubectl -n $NS get pods -o wide
 # agent replicas should be on `bank-creditor.role=agents` nodes (one per zone if multi-AZ)
 ```
 
-Now that `mcp` is deployed and reachable, register it with Catalyst and grant the agent access — see [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md)'s MCP server section for the exact `diagrid mcpserver create` / `access grant` commands. Workflows will fail until this grant exists.
+Now that `mcp` is deployed and reachable, register it with Diagrid and grant the agent access — see [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md)'s MCP server section for the exact `diagrid mcpserver create` / `access grant` commands. Workflows will fail until this grant exists.
 
 ### 6. Open the UI
 
@@ -121,7 +121,7 @@ If you set `service.azureDnsLabel`, the URL is `http://<label>.<region>.cloudapp
 
 ### 7. Optional: LangSmith tracing
 
-The LangGraph agent can send its traces to LangSmith, so you can show the same run in the LangSmith UI next to Catalyst. Each workflow is one `LangGraph` trace, with a child run per graph node (`agent`, `tools`) and a `credit_next` tool run tagged with the pod that ran it.
+The LangGraph agent can send its traces to LangSmith, so you can show the same run in the LangSmith UI next to Diagrid. Each workflow is one `LangGraph` trace, with a child run per graph node (`agent`, `tools`) and a `credit_next` tool run tagged with the pod that ran it.
 
 ```bash
 kubectl -n $NS create secret generic langsmith-api-key \
@@ -145,7 +145,7 @@ helm upgrade mcp deploy/mcp -n $NS --reset-then-reuse-values \
   --set langsmithUrl=<LangSmith project URL>
 ```
 
-The plain LangGraph comparison (`deploy/agent-plain`, no Catalyst) has the same `langsmith` block and traces to its own project, `bank-creditor-plain`. Create the same secret in its namespace, set `langsmith.enabled=true` on that release, and set `langsmithUrl` on that namespace's MCP release.
+The plain LangGraph comparison (`deploy/agent-plain`, no Diagrid) has the same `langsmith` block and traces to its own project, `bank-creditor-plain`. Create the same secret in its namespace, set `langsmith.enabled=true` on that release, and set `langsmithUrl` on that namespace's MCP release.
 
 To turn tracing off again: `helm upgrade agent deploy/agent -n $NS --reset-then-reuse-values --set langsmith.enabled=false`.
 
@@ -187,9 +187,9 @@ kubectl delete namespace $NS
 
 ---
 
-## Local deployment with Catalyst
+## Local deployment with Diagrid
 
-MCP + Postgres run in docker; the agent's Dapr APIs — including its MCP tool calls — go through Diagrid Catalyst's managed control plane instead of a local sidecar. This is the only supported local-dev path: the agent's tool-calling now depends on Catalyst's MCP proxy, which has no self-hosted-Dapr equivalent.
+MCP + Postgres run in docker; the agent's Dapr APIs — including its MCP tool calls — go through Diagrid's managed control plane instead of a local sidecar. This is the only supported local-dev path: the agent's tool-calling now depends on Diagrid's MCP proxy, which has no self-hosted-Dapr equivalent.
 
 Full instructions live in [**CATALYST.md**](./CATALYST.md). Quick outline:
 
@@ -197,7 +197,7 @@ Full instructions live in [**CATALYST.md**](./CATALYST.md). Quick outline:
 2. Create the `agent-worker` app-id. `--enable-agent-infrastructure` auto-provisions an `agent-memory` state store you can reuse.
 3. `docker compose -f local/compose.yaml up -d --build`.
 4. `cd services/agent-langgraph && uv sync`.
-5. Register the MCP service as a Catalyst `MCPServer` and grant `agent-worker` access to its tools — see [CATALYST.md](./CATALYST.md)'s MCP section for the exact `diagrid mcpserver create` / `access grant` commands.
+5. Register the MCP service as a Diagrid `MCPServer` and grant `agent-worker` access to its tools — see [CATALYST.md](./CATALYST.md)'s MCP section for the exact `diagrid mcpserver create` / `access grant` commands.
 6. `diagrid dev run --file dapr.yaml --project <your-project> --skip-managed-kv --skip-managed-pubsub --skip-default-resiliency`.
 
 See [CATALYST.md](./CATALYST.md) for the full walkthrough.
