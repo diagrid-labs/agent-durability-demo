@@ -1,9 +1,9 @@
 # Deployment
 
-Two ways to run the Bank Creditor demo: deploy to Kubernetes (production-shaped, any conformant cluster), or run the agent locally against a Diagrid project. The agent reaches its Postgres-backed tools (`get_balance`, `credit_account`, etc.) through Diagrid's managed MCP proxy — there's no non-Diagrid transport for this anymore, so both paths below require a Diagrid project (Self-Hosted or Cloud); pick based on where the *cluster* lives.
+Two ways to run the Bank Creditor demo: deploy to Kubernetes (production-shaped, any conformant cluster), or run the agent locally against a Diagrid project. The agent reaches its Postgres-backed tools (`get_balance`, `credit_account`, etc.) through Diagrid's managed MCP proxy — there's no non-Diagrid transport for this anymore, so both paths below require a Diagrid project (Enterprise Server or Diagrid Cloud); pick based on where the *cluster* lives.
 
 - [**Deploying to Kubernetes**](#deploying-to-kubernetes) — production-shaped. Bring your own cluster (AKS, EKS, GKE, kind, k3s).
-  - [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md) — Diagrid Self-Hosted in the same cluster (no daprd sidecar; SDK talks to in-cluster gateway), including the MCP server registration + access-grant steps.
+  - [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md) — Enterprise Server in the same cluster (no daprd sidecar; SDK talks to in-cluster gateway), including the MCP server registration + access-grant steps.
 - [**Local deployment with Diagrid**](#local-deployment-with-diagrid) — docker compose for Postgres + MCP, agent runs locally with Diagrid providing managed Dapr APIs and the MCP proxy.
 
 ---

@@ -1,6 +1,6 @@
 # Enterprise Server bring-up
 
-Same agent + MCP code as the upstream-Dapr path, but the Dapr control plane (workflow engine, state store, pubsub) runs **inside your AKS cluster** under a Diagrid Self-Hosted region. Pods don't get a `daprd` sidecar — the Dapr SDK reads `DAPR_HTTP_ENDPOINT` / `DAPR_GRPC_ENDPOINT` / `DAPR_API_TOKEN` from env and talks to the in-cluster Diagrid gateway directly.
+Same agent + MCP code as the upstream-Dapr path, but the Dapr control plane (workflow engine, state store, pubsub) runs **inside your AKS cluster** under an Enterprise Server region. Pods don't get a `daprd` sidecar — the Dapr SDK reads `DAPR_HTTP_ENDPOINT` / `DAPR_GRPC_ENDPOINT` / `DAPR_API_TOKEN` from env and talks to the in-cluster Diagrid gateway directly.
 
 Use this path when you want:
 - Hosted-Dapr semantics + Diagrid Console + workflow visibility
@@ -104,7 +104,7 @@ Save the project ID (e.g. `prj1548627`) for the hostAliases step. There's no sep
 ## 5. Create the K8s secret
 
 ```bash
-# Agent's outbound auth token (fetch from Catalyst)
+# Agent's outbound auth token (fetch from Diagrid)
 diagrid appid get bank-agent-creditor -o json | jq -r '.status.apiToken' > /tmp/agent-api-token.txt
 chmod 600 /tmp/agent-api-token.txt
 
@@ -217,7 +217,7 @@ Then hit the UI at the MCP LB's external hostname (`http://<label>.<region>.clou
 
 ## Tear-down
 
-To wipe the Self-Hosted control plane (preserves the `bank-creditor` namespace + app data):
+To wipe the Enterprise Server control plane (preserves the `bank-creditor` namespace + app data):
 
 ```bash
 helm -n cra-agent uninstall catalyst-otel-logs-collector catalyst-otel-metrics-collector catalyst

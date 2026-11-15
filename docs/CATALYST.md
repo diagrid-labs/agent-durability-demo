@@ -8,7 +8,7 @@ Run the Bank Creditor demo (a LangGraph agent, durably executed via `diagrid.age
 
 ```
 ┌────────────────────┐     diagrid dev tunnel    ┌─────────────────────────┐
-│ Catalyst project   │ ◄───────────────────────► │ agent-worker (uvicorn)  │
+│ Diagrid project    │ ◄───────────────────────► │ agent-worker (uvicorn)  │
 │  · workflow engine │                           │  agent-langgraph        │
 │  · state store     │                           │  appPort 8000           │
 │  · MCP proxy        │──┐                        │  daprHTTPPort 3500      │
@@ -17,7 +17,7 @@ Run the Bank Creditor demo (a LangGraph agent, durably executed via `diagrid.age
                          ▼                                     │  through the MCP
               ┌─────────────────────────┐                      │  proxy, left)
               │ mcp — must be reachable │◄─────────────────────┘
-              │ FROM Catalyst, not just │
+              │ FROM Diagrid, not just  │
               │ from this laptop        │
               └────────────┬────────────┘
                             │ asyncpg
@@ -95,7 +95,7 @@ diagrid mcpserver access grant bank-postgres-mcp \
   --wait
 ```
 
-**Known gap, not yet verified**: with Diagrid Cloud (this section's `my-project` project), `localhost:9000` is only reachable from *this laptop* — `diagrid dev run`'s tunnel exposes the agent's port outward, but doesn't expose the MCP server's port inward-to-Catalyst. If registration or tool calls fail with a connect error, you likely need to tunnel the MCP server too (e.g. `ngrok http 9000` and register that URL instead), or point this registration at an already-reachable MCP endpoint (like the one from [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md), if you have one). This was validated end-to-end for the Self-Hosted / in-cluster case, not for Diagrid Cloud + a laptop-only MCP server.
+**Known gap, not yet verified**: with Diagrid Cloud (this section's `my-project` project), `localhost:9000` is only reachable from *this laptop* — `diagrid dev run`'s tunnel exposes the agent's port outward, but doesn't expose the MCP server's port inward to Diagrid. If registration or tool calls fail with a connect error, you likely need to tunnel the MCP server too (e.g. `ngrok http 9000` and register that URL instead), or point this registration at an already-reachable MCP endpoint (like the one from [CATALYST_SELF_HOSTED.md](./CATALYST_SELF_HOSTED.md), if you have one). This was validated end-to-end for the Enterprise Server / in-cluster case, not for Diagrid Cloud + a laptop-only MCP server.
 
 ## 3. Install agent dependencies
 

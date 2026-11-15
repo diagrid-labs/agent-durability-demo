@@ -18,7 +18,7 @@ Both LangGraph variants can send traces to LangSmith, so the difference also sho
 
 [Edit in Lucid](https://lucid.app/lucidchart/74555cb5-7a45-4dfe-9b2b-3df8d51d2b88/edit)
 
-Clicking **Start run** in the UI makes the MCP server's replenisher call the agent's `/schedule-one` once per account. Each call starts a durable workflow on Diagrid. Every graph step runs as a Diagrid activity, and the agent's one tool, `credit_next`, reaches the MCP server through Diagrid's MCP proxy. When a pod dies, Diagrid hands the unfinished activity to a surviving pod. Every deployment path therefore needs a Diagrid project (Self-Hosted or Cloud).
+Clicking **Start run** in the UI makes the MCP server's replenisher call the agent's `/schedule-one` once per account. Each call starts a durable workflow on Diagrid. Every graph step runs as a Diagrid activity, and the agent's one tool, `credit_next`, reaches the MCP server through Diagrid's MCP proxy. When a pod dies, Diagrid hands the unfinished activity to a surviving pod. Every deployment path therefore needs a Diagrid project (Enterprise Server or Diagrid Cloud).
 
 ## Documentation
 
@@ -55,16 +55,16 @@ The charts pull from public ECR, tagged by semver (currently `0.2.0`):
 ├── ui-prototype/             # React UI, loaded via babel-standalone, served by the MCP server
 ├── services/
 │   ├── mcp/                  # FastAPI + MCP SDK: tools, orchestrator, replenisher, chaos, WebSocket
-│   ├── agent-langgraph/      # LangGraph agent on Catalyst (diagrid.agent.langgraph)
-│   ├── agent-plain/          # The same LangGraph agent with no Catalyst
+│   ├── agent-langgraph/      # LangGraph agent on Diagrid (diagrid.agent.langgraph)
+│   ├── agent-plain/          # The same LangGraph agent with no Diagrid
 │   └── agent-dapr-agents/    # The same agent built with Dapr Agents
 ├── deploy/
 │   ├── postgres/             # Helm chart: Postgres, schema and seed
 │   ├── mcp/                  # Helm chart: MCP server (also serves the UI)
-│   ├── agent/                # Helm chart: agent worker on Catalyst (LangGraph or Dapr Agents)
+│   ├── agent/                # Helm chart: agent worker on Diagrid (LangGraph or Dapr Agents)
 │   ├── agent-plain/          # Helm chart: plain LangGraph agent
 │   ├── ingress/              # Helm chart: nginx Ingress
-│   └── catalyst-selfhosted/  # Values override for the Catalyst Self-Hosted gateway ports
+│   └── catalyst-selfhosted/  # Values override for the Enterprise Server gateway ports
 ├── local/
 │   ├── compose.yaml          # docker compose: Postgres + MCP server (the agent runs on your laptop)
 │   └── init.sql              # bankdemo schema + dapr_state DB
