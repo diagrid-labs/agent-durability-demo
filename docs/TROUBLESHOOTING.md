@@ -38,7 +38,7 @@ Fix (already applied in `services/agent-langgraph/agent_worker/agent.py`): regis
 
 The workflow runtime needs a state store named whatever `AGENT_STATE_STORE` says. The chart's defaults are tuned for Enterprise Server (`stateStore.componentName: agent-memory`, `stateStore.create: false`).
 
-**Diagrid (Self-Hosted or Local)** — the named component doesn't exist in the project. `agent-memory` is auto-provisioned by `--enable-agent-infrastructure` at project-create time and is the chart default. If it's missing, the project wasn't created with that flag; recreate the project:
+**Diagrid (Enterprise Server or local)** — the named component doesn't exist in the project. `agent-memory` is auto-provisioned by `--enable-agent-infrastructure` at project-create time and is the chart default. If it's missing, the project wasn't created with that flag; recreate the project:
 
 ```bash
 diagrid project delete <name> --wait
@@ -160,7 +160,7 @@ kubectl -n bank-creditor rollout restart deployment/mcp
 ## Throughput notes by deploy mode
 
 - **Enterprise Server** (data plane in your cluster): no per-app RPS limit, intra-cluster latency. The default `target_concurrency` of 100 works fine.
-- **Local Diagrid** (`diagrid dev run`): all traffic tunnels through the dev proxy, including MCP tool calls; expect slower throughput than Self-Hosted but the durability story is identical.
+- **Local Diagrid** (`diagrid dev run`): all traffic tunnels through the dev proxy, including MCP tool calls; expect slower throughput than Enterprise Server but the durability story is identical.
 
 The durability story (the actual point of the demo) works at any throughput.
 

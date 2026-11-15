@@ -1,6 +1,6 @@
 {{- if .Values.stateStore.create }}
 # In-cluster Dapr Component for the workflow state store. Skip this template
-# in Diagrid Cloud / Self-Hosted mode (`--set stateStore.create=false`) —
+# in Diagrid Cloud / Enterprise Server mode (`--set stateStore.create=false`) —
 # the component lives in the Diagrid project there, provisioned via
 # `diagrid kv create`, and applying the CRD here would either conflict or
 # be silently ignored by the Diagrid-mode daprd.

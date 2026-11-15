@@ -26,7 +26,7 @@ services/agent-langgraph/agent_worker/  Dapr workflow worker (LangGraph via diag
   main.py                     FastAPI + DaprWorkflowGraphRunner; /schedule-one is hot path
   agent.py                    LangGraph StateGraph ("banker") + DaprWorkflowGraphRunner + tool defs
   stub_llm.py                 deterministic stub for STUB_LLM=true
-  mcp_client.py               MCP client — calls tools through Catalyst's MCP proxy, not the mcp Service directly
+  mcp_client.py               MCP client — calls tools through Diagrid's MCP proxy, not the mcp Service directly
 
 deploy/                       Helm charts: agent, mcp, postgres, ingress
 local/                        compose.yaml + init.sql for laptop-only loop
@@ -39,7 +39,7 @@ UI Start ─POST→ MCP /agent/spawn ─→ Replenisher.start
                                     └→ orch.reset() — fills 1000-task queue
                                     └→ loop: for slot in N: POST agent /schedule-one
                                                            └→ DaprWorkflowGraphRunner.run_async(workflow_id=instance_id)
-                                                                  → Catalyst workflow engine
+                                                                  → Diagrid workflow engine
                                                                        → durable activities execute LangGraph nodes, call MCP tools
                                                                             → Postgres credit_account (idempotent)
 ```
