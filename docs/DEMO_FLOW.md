@@ -4,9 +4,17 @@ Ten accounts start at $100. One agent per account credits $1 at a time until the
 
 ## Before you start
 
-- Sign in to [LangSmith](https://smith.langchain.com) with the 1Password item **LangSmith** in the **Diagrid Company Wide** vault (`hi@diagrid.io`). Otherwise the UIs' **Open in LangSmith ↗** button lands on the login page.
-- Sign in to the [Diagrid Console](https://catalyst.diagrid.io) with your Diagrid account, org **Demo Production Diagrid**.
-- Click **↺ Reset** in each UI you'll use.
+| What | Link | Sign in |
+|---|---|---|
+| Plain LangGraph UI | http://demo-prod-catalyst-plain.northeurope.cloudapp.azure.com/ | No login |
+| LangGraph on Diagrid UI | http://demo-prod-catalyst-agents.northeurope.cloudapp.azure.com/ | No login |
+| Dapr Agents on Diagrid UI | http://demo-prod-catalyst-dapr-agents.northeurope.cloudapp.azure.com/ | No login |
+| LangSmith | https://smith.langchain.com | 1Password item **LangSmith**, **Diagrid Company Wide** vault (`hi@diagrid.io`) |
+| LangSmith project, Diagrid | [bank-creditor](https://smith.langchain.com/o/ee448549-9340-4d81-a47d-1430acf42469/projects/p/f6ab8b2a-0814-49e4-8a9a-ec1bcaeb070a) | Same LangSmith login |
+| LangSmith project, plain | [bank-creditor-plain](https://smith.langchain.com/o/ee448549-9340-4d81-a47d-1430acf42469/projects/p/394ac961-ebd4-48fb-9d18-c20bdb664e51) | Same LangSmith login |
+| Diagrid Console | https://catalyst.diagrid.io | Your Diagrid account, org **Demo Production Diagrid**, projects `resiliency-demo-langgraph` and `resiliency-demo-dapr-agents` |
+
+Sign in to LangSmith first, or the UIs' **Open in LangSmith ↗** button lands on the login page. Click **↺ Reset** in each UI you'll use.
 
 ## Plain LangGraph
 
